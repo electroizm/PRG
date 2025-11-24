@@ -50,7 +50,7 @@ PRG, aşağıdaki sistemlerle entegre çalışan modüler bir kurumsal yönetim 
 - 🚚 **Sevkiyat İşlemleri** - Kapsamlı sevkiyat ve lojistik
 - 💰 **Mali Takip** - Kasa, virman ve POS işlemleri
 - ⚠️ **Risk Yönetimi** - Müşteri risk analizi ve izleme
-- 🔐 **SSH Yönetimi** - Güvenli kabuk erişimi ve yönetimi
+- 🔐 **SSH Yönetimi** - Satış Sonrası Destek ve Yönetimi
 - 💳 **Ödeme İşlemleri** - Sanal POS ve ödeme takibi
 - 📄 **Doküman Yönetimi** - İrsaliyeler ve faturalar
 
@@ -105,7 +105,6 @@ Kapsamlı stok yönetim sistemi:
 - Gerçek zamanlı stok güncellemeleri
 - Bulanık eşleştirme ile akıllı arama
 - Düzenlenebilir alışveriş sepeti
-- Temiz kullanıcı deneyimi için focus border kaldırıldı
 
 ---
 
@@ -114,7 +113,7 @@ Kapsamlı stok yönetim sistemi:
 
 Komple sevkiyat operasyonları yönetimi:
 - Otomatik tamamlama ile müşteri arama
-- Çoklu sekme sevkiyat verileri (Sevkiyat, Bekleyenler, Araç, Malzeme)
+- Çoklu sekme sevkiyat verileri (Sevkiyat, Bekleyenler, Araç, Malzeme, Plan)
 - Bildirimler için WhatsApp entegrasyonu
 - Email bildirimleri
 - Tüm sekmeler için Excel dışa aktarma
@@ -122,13 +121,12 @@ Komple sevkiyat operasyonları yönetimi:
 - Mikro ERP entegrasyonu
 
 **Ana Özellikler:**
-- Bulanık müşteri adı eşleştirme
+- Bulanık(fuzzywuzzy) müşteri adı eşleştirme
 - Sözleşme ürün sorgulama
 - Araç ve malzeme takibi
 - Otomatik email/WhatsApp mesajlaşma
 - Çoklu görünüm veri filtreleme
 - Özel tarih aralığı filtreleme
-- Müşteri listesinden focus border kaldırıldı
 
 ---
 
@@ -141,7 +139,7 @@ Gelişmiş sözleşme yaşam döngüsü yönetimi:
 - Müşteri ve sipariş bilgileri
 - Mikro ERP entegrasyonu (Cari, Stok, Sipariş)
 - IPT durum takibi
-- Header bilgi yönetimi
+- Header bilgi yönetimi - Satınalma fiyatlandırma
 - Çoklu tablo veri görünümü
 
 **Ana Özellikler:**
@@ -151,7 +149,6 @@ Gelişmiş sözleşme yaşam döngüsü yönetimi:
 - SAP/ERP aktarım işlemleri
 - Stok kartı oluşturma
 - Sipariş transferi
-- 3 tablodan focus border kaldırıldı
 
 ---
 
@@ -171,7 +168,6 @@ Müşteri kredisi ve risk yönetimi:
 - Renkli risk göstergeleri
 - Eşik tabanlı uyarılar
 - Geçmiş risk takibi
-- Temiz tablolar için focus border kaldırıldı
 
 ---
 
@@ -181,7 +177,6 @@ Müşteri kredisi ve risk yönetimi:
 Yazar kasa ve ödeme yönetimi:
 - Fatura takibi
 - Ödeme tutarı filtreleme
-- Tarih formatlama (00:00 saat gösterimi kaldırıldı)
 - Excel dışa aktarma
 - Mikro ERP entegrasyonu
 - Hızlı navigasyon
@@ -196,7 +191,7 @@ Yazar kasa ve ödeme yönetimi:
 ---
 
 ### 6. **SSH Modülü** (`ssh_module.py`)
-**Güvenli Kabuk Yönetimi**
+**SSH Yönetimi**
 
 SSH bağlantı ve yönetim sistemi:
 - Bağlantı yönetimi
@@ -209,7 +204,6 @@ SSH bağlantı ve yönetim sistemi:
 - Çoklu tablo SSH veri gösterimi
 - Bağlantı durumu takibi
 - Yazdırma işlevi
-- 2 tablodan focus border kaldırıldı
 - Gerçek zamanlı güncellemeler
 
 ---
@@ -247,7 +241,6 @@ Online ödeme işleme ve takip:
 - Gerçek zamanlı POS verileri
 - İşlem geçmişi
 - Durum göstergeleri
-- QApplication import düzeltmesi uygulandı
 - Dışa aktarma işlevi
 
 ---
@@ -266,10 +259,6 @@ Sevkiyat dokümanı yönetimi:
 - Sekme tabanlı organizasyon
 - Doküman arama
 - Excel'e aktarma
-- Kopyalama fonksiyonu ile sağ tık menüsü
-- Focus border kaldırıldı
-- Kalın yazı tipi stili
-
 ---
 
 ### 10. **Fiyat Modülü** (`fiyat_module.py`)
@@ -441,7 +430,7 @@ PRG/
 ## 🔄 Son Güncellemeler
 
 ### UI/UX İyileştirmeleri
-- ✅ **Focus Border Kaldırma** - Tüm modüllerde temiz tablo seçimi
+  - Tüm modüllerde temiz tablo seçimi
   - stok_module.py - Tablo widget'ları
   - sevkiyat_module.py - Müşteri listesi
   - sozlesme_module.py - 3 tablo (products_table, dialog tablosu, ana tablo)
@@ -507,7 +496,7 @@ Bu özel bir projedir. Katkılar dahili olarak yönetilmektedir.
 
 ## 📞 Destek
 
-Dahili destek için geliştirme ekibiyle iletişime geçin.
+Dahili destek için x.com/Guneslsmail ile iletişime geçin.
 
 ---
 
