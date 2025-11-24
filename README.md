@@ -1,345 +1,345 @@
-# PRG - Enterprise Management System
+# PRG - Kurumsal Yönetim Sistemi
 
 [![Python](https://img.shields.io/badge/Python-3.13-blue.svg)](https://www.python.org/)
 [![PyQt5](https://img.shields.io/badge/PyQt5-5.15+-green.svg)](https://www.riverbankcomputing.com/software/pyqt/)
 [![License](https://img.shields.io/badge/license-Private-red.svg)]()
 
-**PRG** is a comprehensive enterprise management system built with PyQt5, designed for managing various business operations including inventory, contracts, shipping, financial transactions, and more.
+**PRG**, PyQt5 ile geliştirilmiş kapsamlı bir kurumsal yönetim sistemidir. Stok yönetimi, sözleşmeler, sevkiyat, finansal işlemler ve daha fazlası için tasarlanmıştır.
 
-## 📋 Table of Contents
+## 📋 İçindekiler
 
-- [Overview](#overview)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Modules](#modules)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [Development](#development)
-- [Recent Updates](#recent-updates)
-- [Technical Stack](#technical-stack)
+- [Genel Bakış](#genel-bakış)
+- [Özellikler](#özellikler)
+- [Mimari](#mimari)
+- [Modüller](#modüller)
+- [Kurulum](#kurulum)
+- [Yapılandırma](#yapılandırma)
+- [Kullanım](#kullanım)
+- [Geliştirme](#geliştirme)
+- [Son Güncellemeler](#son-güncellemeler)
+- [Teknoloji Yığını](#teknoloji-yığını)
 
-## 🌟 Overview
+## 🌟 Genel Bakış
 
-PRG is a modular enterprise management application that integrates with:
-- **Google Sheets** (via Service Account) for data storage and synchronization
-- **Microsoft SQL Server** (Mikro ERP) for financial and inventory data
-- **Email services** for automated notifications
-- **WhatsApp** for customer communication
+PRG, aşağıdaki sistemlerle entegre çalışan modüler bir kurumsal yönetim uygulamasıdır:
+- **Google Sheets** (Service Account ile) - Veri depolama ve senkronizasyon
+- **Microsoft SQL Server** (Mikro ERP) - Mali ve stok verileri
+- **Email servisleri** - Otomatik bildirimler
+- **WhatsApp** - Müşteri iletişimi
 
-**Statistics:**
-- **22 Python files**
-- **22,456+ lines of code**
-- **12 functional modules**
-- **Modern PyQt5 UI with dark/light themes**
+**İstatistikler:**
+- **22 Python dosyası**
+- **22.456+ satır kod**
+- **12 fonksiyonel modül**
+- **Modern PyQt5 arayüzü (koyu/açık temalar)**
 
-## ✨ Features
+## ✨ Özellikler
 
-### Core Features
-- 🔐 **Centralized Configuration** - Service Account based authentication
-- 🎨 **Modern UI** - Clean, responsive PyQt5 interface
-- 💾 **Global Data Cache** - Efficient data management with caching
-- 📊 **Real-time Data Sync** - Bidirectional sync with Google Sheets
-- 🔄 **Lazy Loading** - Optimized performance with on-demand data loading
-- 🎯 **Focus Border Free** - Improved UX with clean table selection
-- 📱 **Multi-platform Support** - Windows-optimized with EXE packaging
+### Temel Özellikler
+- 🔐 **Merkezi Yapılandırma** - Service Account tabanlı kimlik doğrulama
+- 🎨 **Modern Arayüz** - Temiz, duyarlı PyQt5 arayüzü
+- 💾 **Global Veri Cache** - Önbellekleme ile verimli veri yönetimi
+- 📊 **Gerçek Zamanlı Senkronizasyon** - Google Sheets ile çift yönlü senkronizasyon
+- 🔄 **Lazy Loading** - İhtiyaç anında veri yükleme ile optimize performans
+- 🎯 **Focus Border Free** - Temiz tablo seçimi ile gelişmiş kullanıcı deneyimi
+- 📱 **Çoklu Platform Desteği** - Windows için EXE paketleme ile optimize edilmiş
 
-### Business Features
-- 📦 **Inventory Management** - Complete stock tracking and management
-- 📝 **Contract Management** - Full contract lifecycle management
-- 🚚 **Shipping Operations** - Comprehensive shipping and logistics
-- 💰 **Financial Tracking** - Cash register, transfers, and POS operations
-- ⚠️ **Risk Management** - Customer risk analysis and monitoring
-- 🔐 **SSH Management** - Secure shell access and management
-- 💳 **Payment Processing** - Virtual POS and payment tracking
-- 📄 **Document Management** - Waybills and invoices
+### İş Özellikleri
+- 📦 **Stok Yönetimi** - Komple stok takibi ve yönetimi
+- 📝 **Sözleşme Yönetimi** - Tam sözleşme yaşam döngüsü yönetimi
+- 🚚 **Sevkiyat İşlemleri** - Kapsamlı sevkiyat ve lojistik
+- 💰 **Mali Takip** - Kasa, virman ve POS işlemleri
+- ⚠️ **Risk Yönetimi** - Müşteri risk analizi ve izleme
+- 🔐 **SSH Yönetimi** - Güvenli kabuk erişimi ve yönetimi
+- 💳 **Ödeme İşlemleri** - Sanal POS ve ödeme takibi
+- 📄 **Doküman Yönetimi** - İrsaliyeler ve faturalar
 
-## 🏗️ Architecture
+## 🏗️ Mimari
 
-### Core Components
+### Temel Bileşenler
 
-#### `run.py` - Application Entry Point
-Entry point for the PRG application. Handles:
-- Python path configuration
-- Module initialization
-- Error handling and diagnostics
-- Service Account setup verification
+#### `run.py` - Uygulama Giriş Noktası
+PRG uygulamasının giriş noktası. İşlevler:
+- Python yolu yapılandırması
+- Modül başlatma
+- Hata yönetimi ve teşhis
+- Service Account kurulum doğrulaması
 
-#### `main.py` - Main Application Logic
-Contains the main application window and core logic:
-- **GlobalDataCache** - Centralized data caching system
-- **PRGMainWindow** - Main window with tabbed interface
-- Module integration and lifecycle management
-- Global data refresh mechanism
+#### `main.py` - Ana Uygulama Mantığı
+Ana uygulama penceresi ve temel mantık:
+- **GlobalDataCache** - Merkezi veri önbellekleme sistemi
+- **PRGMainWindow** - Sekmeli arayüz ile ana pencere
+- Modül entegrasyonu ve yaşam döngüsü yönetimi
+- Global veri yenileme mekanizması
 
-#### `core_architecture.py` - Architectural Foundation
-Modern architecture patterns:
-- **EventType & ModuleType** - Event-driven architecture
-- **Theme** - UI theming system
-- **EventBus** - Inter-module communication
-- **ModuleRegistry** - Dynamic module loading
+#### `core_architecture.py` - Mimari Temel
+Modern mimari desenleri:
+- **EventType & ModuleType** - Olay güdümlü mimari
+- **Theme** - Arayüz tema sistemi
+- **EventBus** - Modüller arası iletişim
+- **ModuleRegistry** - Dinamik modül yükleme
 
-#### `ui_components.py` - UI Components
-Reusable UI components and widgets
+#### `ui_components.py` - UI Bileşenleri
+Yeniden kullanılabilir arayüz bileşenleri ve widget'lar
 
-#### `embedded_resources.py` - Resource Management
-Application icons and embedded resources
+#### `embedded_resources.py` - Kaynak Yönetimi
+Uygulama ikonları ve gömülü kaynaklar
 
-## 📦 Modules
+## 📦 Modüller
 
-### 1. **Stok Module** (`stok_module.py`)
-**Inventory & Stock Management**
+### 1. **Stok Modülü** (`stok_module.py`)
+**Envanter ve Stok Yönetimi**
 
-Comprehensive stock management system with:
-- Real-time stock levels (DEPO, EXCLUSIVE, SUBE)
-- Shopping cart (Sepet) management
-- Advanced filtering and search
-- SQL Server integration for Mikro ERP data
-- Price calculations with KDV and margins
-- Excel import/export functionality
-- Context menu for quick actions
+Kapsamlı stok yönetim sistemi:
+- Gerçek zamanlı stok seviyeleri (DEPO, EXCLUSIVE, SUBE)
+- Alışveriş sepeti (Sepet) yönetimi
+- Gelişmiş filtreleme ve arama
+- Mikro ERP verileri için SQL Server entegrasyonu
+- KDV ve marj ile fiyat hesaplamaları
+- Excel içe/dışa aktarma
+- Hızlı işlemler için sağ tık menüsü
 
-**Key Features:**
-- Multi-warehouse support
-- Automated price calculations
-- Real-time stock updates
-- Smart search with fuzzy matching
-- Editable shopping cart
-- Focus border removed for clean UX
-
----
-
-### 2. **Sevkiyat Module** (`sevkiyat_module.py`)
-**Shipping & Logistics Management**
-
-Complete shipping operations management:
-- Customer search with autocomplete
-- Multi-tab shipping data (Sevkiyat, Bekleyenler, Araç, Malzeme)
-- WhatsApp integration for notifications
-- Email notifications
-- Excel export for all tabs
-- Risk analysis integration
-- Mikro ERP integration
-
-**Key Features:**
-- Fuzzy customer name matching
-- Contract product lookup
-- Vehicle and material tracking
-- Automated email/WhatsApp messaging
-- Multi-view data filtering
-- Custom date range filtering
-- Focus border removed from customer list
+**Ana Özellikler:**
+- Çoklu depo desteği
+- Otomatik fiyat hesaplamaları
+- Gerçek zamanlı stok güncellemeleri
+- Bulanık eşleştirme ile akıllı arama
+- Düzenlenebilir alışveriş sepeti
+- Temiz kullanıcı deneyimi için focus border kaldırıldı
 
 ---
 
-### 3. **Sozlesme Module** (`sozlesme_module.py`)
-**Contract Management**
+### 2. **Sevkiyat Modülü** (`sevkiyat_module.py`)
+**Sevkiyat ve Lojistik Yönetimi**
 
-Advanced contract lifecycle management:
-- Contract details viewing
-- Product line items management
-- Customer and order information
-- Mikro ERP integration (Cari, Stok, Sipariş)
-- IPT status tracking
-- Header information management
-- Multi-table data display
+Komple sevkiyat operasyonları yönetimi:
+- Otomatik tamamlama ile müşteri arama
+- Çoklu sekme sevkiyat verileri (Sevkiyat, Bekleyenler, Araç, Malzeme)
+- Bildirimler için WhatsApp entegrasyonu
+- Email bildirimleri
+- Tüm sekmeler için Excel dışa aktarma
+- Risk analizi entegrasyonu
+- Mikro ERP entegrasyonu
 
-**Key Features:**
-- Contract search and filtering
-- Customer selection dialog
-- Product table editing
-- SAP/ERP transfer operations
-- Stock card creation
-- Order transfer
-- Focus border removed from 3 tables
-
----
-
-### 4. **Risk Module** (`risk_module.py`)
-**Customer Risk Analysis**
-
-Customer credit and risk management:
-- Risk level monitoring
-- Credit limit tracking
-- Payment history analysis
-- Mikro ERP data integration
-- Excel export capabilities
-- Automated risk updates
-
-**Key Features:**
-- Real-time risk calculations
-- Color-coded risk indicators
-- Threshold-based alerts
-- Historical risk tracking
-- Focus border removed for clean tables
+**Ana Özellikler:**
+- Bulanık müşteri adı eşleştirme
+- Sözleşme ürün sorgulama
+- Araç ve malzeme takibi
+- Otomatik email/WhatsApp mesajlaşma
+- Çoklu görünüm veri filtreleme
+- Özel tarih aralığı filtreleme
+- Müşteri listesinden focus border kaldırıldı
 
 ---
 
-### 5. **OKC Module** (`okc_module.py`)
-**OKC YazarKasa Management**
+### 3. **Sözleşme Modülü** (`sozlesme_module.py`)
+**Sözleşme Yönetimi**
 
-Cash register and payment management:
-- Invoice tracking
-- Payment amount filtering
-- Date formatting (removed 00:00 time display)
-- Excel export
-- Mikro ERP integration
-- Quick navigation
+Gelişmiş sözleşme yaşam döngüsü yönetimi:
+- Sözleşme detaylarını görüntüleme
+- Ürün kalem yönetimi
+- Müşteri ve sipariş bilgileri
+- Mikro ERP entegrasyonu (Cari, Stok, Sipariş)
+- IPT durum takibi
+- Header bilgi yönetimi
+- Çoklu tablo veri görünümü
 
-**Key Features:**
-- Amount-based filtering (1000 TL multiplier)
-- Invoice date management
-- Payment tracking
-- Color-coded status indicators
-- Clean date display (DD.MM.YYYY)
-
----
-
-### 6. **SSH Module** (`ssh_module.py`)
-**Secure Shell Management**
-
-SSH connection and management system:
-- Connection management
-- Two-table interface for different SSH data views
-- Status monitoring
-- Quick actions
-- Print support
-
-**Key Features:**
-- Multi-table SSH data display
-- Connection status tracking
-- Print functionality
-- Focus border removed from 2 tables
-- Real-time updates
+**Ana Özellikler:**
+- Sözleşme arama ve filtreleme
+- Müşteri seçim diyalogu
+- Ürün tablosu düzenleme
+- SAP/ERP aktarım işlemleri
+- Stok kartı oluşturma
+- Sipariş transferi
+- 3 tablodan focus border kaldırıldı
 
 ---
 
-### 7. **Kasa Module** (`kasa_module.py`)
-**Cash Register Operations**
+### 4. **Risk Modülü** (`risk_module.py`)
+**Müşteri Risk Analizi**
 
-Financial transaction management:
-- Monthly cash register data
-- Year/month filtering
-- Transaction categorization
-- Excel export
-- Balance calculations
+Müşteri kredisi ve risk yönetimi:
+- Risk seviyesi izleme
+- Kredi limiti takibi
+- Ödeme geçmişi analizi
+- Mikro ERP veri entegrasyonu
+- Excel dışa aktarma
+- Otomatik risk güncellemeleri
 
-**Key Features:**
-- Monthly view with current date default
-- Color-coded transaction types
-- Balance tracking
-- Quick navigation
-- Export capabilities
-
----
-
-### 8. **Sanalpos Module** (`sanalpos_module.py`)
-**Virtual POS Management**
-
-Online payment processing and tracking:
-- POS transaction monitoring
-- Payment status tracking
-- Date-based filtering
-- Excel export
-- Integration with Kasa data
-
-**Key Features:**
-- Real-time POS data
-- Transaction history
-- Status indicators
-- QApplication import fix applied
-- Export functionality
+**Ana Özellikler:**
+- Gerçek zamanlı risk hesaplamaları
+- Renkli risk göstergeleri
+- Eşik tabanlı uyarılar
+- Geçmiş risk takibi
+- Temiz tablolar için focus border kaldırıldı
 
 ---
 
-### 9. **Irsaliye Module** (`irsaliye_module.py`)
-**Waybill Management**
+### 5. **OKC Modülü** (`okc_module.py`)
+**OKC YazarKasa Yönetimi**
 
-Shipping document management:
-- Waybill creation and tracking
-- Multi-tab interface
-- Document export
-- Customer assignment
-- Date tracking
+Yazar kasa ve ödeme yönetimi:
+- Fatura takibi
+- Ödeme tutarı filtreleme
+- Tarih formatlama (00:00 saat gösterimi kaldırıldı)
+- Excel dışa aktarma
+- Mikro ERP entegrasyonu
+- Hızlı navigasyon
 
-**Key Features:**
-- Tab-based organization
-- Document search
-- Export to Excel
-- Context menu with copy function
-- Focus border removed
-- Bold font styling
-
----
-
-### 10. **Fiyat Module** (`fiyat_module.py`)
-**Price & Label Management**
-
-Product pricing and labeling:
-- SAP code generation
-- Price list management
-- Stock data integration
-- Label printing preparation
-- Excel export/import
-
-**Key Features:**
-- Automated SAP code creation
-- Multi-source data integration (DEPO, EXC, SUBE)
-- Price calculation
-- Batch processing
-- Threading for performance
+**Ana Özellikler:**
+- Tutar bazlı filtreleme (1000 TL çarpanı)
+- Fatura tarihi yönetimi
+- Ödeme takibi
+- Renkli durum göstergeleri
+- Temiz tarih gösterimi (GG.AA.YYYY)
 
 ---
 
-### 11. **Virman Module** (`virman_module.py`)
-**Transfer Management**
+### 6. **SSH Modülü** (`ssh_module.py`)
+**Güvenli Kabuk Yönetimi**
 
-Inter-account transfer operations:
-- Account transfer tracking
-- Monthly data view
-- Balance verification
-- SQL Server integration
-- Transaction history
+SSH bağlantı ve yönetim sistemi:
+- Bağlantı yönetimi
+- Farklı SSH veri görünümleri için iki tablolu arayüz
+- Durum izleme
+- Hızlı işlemler
+- Yazdırma desteği
 
-**Key Features:**
-- Month-based filtering
-- Transfer verification
-- Balance checking
-- Transaction logging
-- Real-time updates
+**Ana Özellikler:**
+- Çoklu tablo SSH veri gösterimi
+- Bağlantı durumu takibi
+- Yazdırma işlevi
+- 2 tablodan focus border kaldırıldı
+- Gerçek zamanlı güncellemeler
 
 ---
 
-### 12. **Ayar Module** (`ayar_module.py`)
-**Settings & Configuration**
+### 7. **Kasa Modülü** (`kasa_module.py`)
+**Kasa İşlemleri**
 
-System configuration management:
-- Multi-tab settings (Ayar, Mail, NoRisk)
-- Google Sheets integration
-- Configuration editing
-- Settings persistence
-- Lazy loading optimization
+Mali işlem yönetimi:
+- Aylık kasa verileri
+- Yıl/ay filtreleme
+- İşlem kategorilendirme
+- Excel dışa aktarma
+- Bakiye hesaplamaları
 
-**Key Features:**
-- Tab-based organization
-- Direct Google Sheets editing
-- Configuration validation
-- Save/Reload functionality
-- Real-time updates
+**Ana Özellikler:**
+- Güncel tarih varsayılanı ile aylık görünüm
+- Renkli işlem tipleri
+- Bakiye takibi
+- Hızlı navigasyon
+- Dışa aktarma yetenekleri
 
-## 🚀 Installation
+---
 
-### Prerequisites
+### 8. **Sanalpos Modülü** (`sanalpos_module.py`)
+**Sanal POS Yönetimi**
+
+Online ödeme işleme ve takip:
+- POS işlem izleme
+- Ödeme durumu takibi
+- Tarih bazlı filtreleme
+- Excel dışa aktarma
+- Kasa verileri ile entegrasyon
+
+**Ana Özellikler:**
+- Gerçek zamanlı POS verileri
+- İşlem geçmişi
+- Durum göstergeleri
+- QApplication import düzeltmesi uygulandı
+- Dışa aktarma işlevi
+
+---
+
+### 9. **İrsaliye Modülü** (`irsaliye_module.py`)
+**İrsaliye Yönetimi**
+
+Sevkiyat dokümanı yönetimi:
+- İrsaliye oluşturma ve takip
+- Çoklu sekme arayüzü
+- Doküman dışa aktarma
+- Müşteri atama
+- Tarih takibi
+
+**Ana Özellikler:**
+- Sekme tabanlı organizasyon
+- Doküman arama
+- Excel'e aktarma
+- Kopyalama fonksiyonu ile sağ tık menüsü
+- Focus border kaldırıldı
+- Kalın yazı tipi stili
+
+---
+
+### 10. **Fiyat Modülü** (`fiyat_module.py`)
+**Fiyat ve Etiket Yönetimi**
+
+Ürün fiyatlandırma ve etiketleme:
+- SAP kodu oluşturma
+- Fiyat listesi yönetimi
+- Stok veri entegrasyonu
+- Etiket yazdırma hazırlığı
+- Excel dışa/içe aktarma
+
+**Ana Özellikler:**
+- Otomatik SAP kodu oluşturma
+- Çoklu kaynak veri entegrasyonu (DEPO, EXC, SUBE)
+- Fiyat hesaplama
+- Toplu işleme
+- Performans için threading
+
+---
+
+### 11. **Virman Modülü** (`virman_module.py`)
+**Virman Yönetimi**
+
+Hesaplar arası transfer işlemleri:
+- Hesap transferi takibi
+- Aylık veri görünümü
+- Bakiye doğrulama
+- SQL Server entegrasyonu
+- İşlem geçmişi
+
+**Ana Özellikler:**
+- Ay bazlı filtreleme
+- Transfer doğrulama
+- Bakiye kontrolü
+- İşlem kayıtları
+- Gerçek zamanlı güncellemeler
+
+---
+
+### 12. **Ayar Modülü** (`ayar_module.py`)
+**Ayarlar ve Yapılandırma**
+
+Sistem yapılandırma yönetimi:
+- Çoklu sekme ayarlar (Ayar, Mail, NoRisk)
+- Google Sheets entegrasyonu
+- Yapılandırma düzenleme
+- Ayar kalıcılığı
+- Lazy loading optimizasyonu
+
+**Ana Özellikler:**
+- Sekme tabanlı organizasyon
+- Doğrudan Google Sheets düzenleme
+- Yapılandırma doğrulama
+- Kaydet/Yeniden yükle işlevleri
+- Gerçek zamanlı güncellemeler
+
+## 🚀 Kurulum
+
+### Gereksinimler
 
 ```bash
 # Python 3.13+
 python --version
 
-# Required packages
+# Gerekli paketler
 pip install -r requirements.txt
 ```
 
-### Required Dependencies
+### Gerekli Bağımlılıklar
 
 ```
 PyQt5>=5.15.0
@@ -357,160 +357,160 @@ pyperclip>=1.8.0
 cryptography>=41.0.0
 ```
 
-### Service Account Setup
+### Service Account Kurulumu
 
-1. Create a Google Cloud project
-2. Enable Google Sheets API
-3. Create a Service Account
-4. Download `service_account.json`
-5. Place in parent directory (`D:/GoogleDrive/PRG/OAuth2/`)
-6. Share Google Sheets with service account email
+1. Google Cloud projesi oluşturun
+2. Google Sheets API'yi etkinleştirin
+3. Service Account oluşturun
+4. `service_account.json` dosyasını indirin
+5. Üst dizine yerleştirin (`D:/GoogleDrive/PRG/OAuth2/`)
+6. Google Sheets'i service account email ile paylaşın
 
-### Configuration
+### Yapılandırma
 
-Create `central_config.py` in parent directory:
+Üst dizinde `central_config.py` oluşturun:
 
 ```python
 class CentralConfigManager:
-    MASTER_SPREADSHEET_ID = "your_spreadsheet_id_here"
-    # ... other configuration
+    MASTER_SPREADSHEET_ID = "spreadsheet_id_buraya"
+    # ... diğer yapılandırmalar
 ```
 
-## 💻 Usage
+## 💻 Kullanım
 
-### Running the Application
+### Uygulamayı Çalıştırma
 
 ```bash
-# From OAuth2 directory
+# OAuth2 dizininden
 cd D:/GoogleDrive/PRG/OAuth2
 python PRG/run.py
 ```
 
-### Building Executable
+### Çalıştırılabilir Dosya Oluşturma
 
 ```bash
-# Using PyInstaller
+# PyInstaller kullanarak
 pyinstaller PRG_onefile.spec --clean --noconfirm
 ```
 
-The executable will be created in `dist/PRG.exe` (~76MB).
+Çalıştırılabilir dosya `dist/PRG.exe` dizininde oluşturulacaktır (~76MB).
 
-## 🛠️ Development
+## 🛠️ Geliştirme
 
-### Project Structure
+### Proje Yapısı
 
 ```
 PRG/
-├── run.py                  # Entry point
-├── main.py                 # Main application
-├── core_architecture.py    # Architecture patterns
-├── ui_components.py        # UI components
-├── embedded_resources.py   # Resources
-├── ayar_module.py          # Settings
-├── stok_module.py          # Inventory
-├── sevkiyat_module.py      # Shipping
-├── sozlesme_module.py      # Contracts
-├── risk_module.py          # Risk management
-├── okc_module.py           # Cash register
-├── ssh_module.py           # SSH management
-├── kasa_module.py          # Cash operations
-├── sanalpos_module.py      # Virtual POS
-├── irsaliye_module.py      # Waybills
-├── fiyat_module.py         # Pricing
-├── virman_module.py        # Transfers
-├── icon.ico                # Application icon
-└── icon.jpg                # Icon source
+├── run.py                  # Giriş noktası
+├── main.py                 # Ana uygulama
+├── core_architecture.py    # Mimari desenler
+├── ui_components.py        # UI bileşenleri
+├── embedded_resources.py   # Kaynaklar
+├── ayar_module.py          # Ayarlar
+├── stok_module.py          # Stok
+├── sevkiyat_module.py      # Sevkiyat
+├── sozlesme_module.py      # Sözleşmeler
+├── risk_module.py          # Risk yönetimi
+├── okc_module.py           # Yazar kasa
+├── ssh_module.py           # SSH yönetimi
+├── kasa_module.py          # Kasa işlemleri
+├── sanalpos_module.py      # Sanal POS
+├── irsaliye_module.py      # İrsaliyeler
+├── fiyat_module.py         # Fiyatlandırma
+├── virman_module.py        # Virmanlar
+├── icon.ico                # Uygulama ikonu
+└── icon.jpg                # İkon kaynağı
 ```
 
-### Code Style
+### Kod Stili
 
-- **PEP 8** compliance
-- **Type hints** where applicable
-- **Docstrings** for all modules and classes
-- **Constants** for configuration values
-- **Centralized styling** via stylesheet constants
+- **PEP 8** uyumluluğu
+- Uygun yerlerde **type hints**
+- Tüm modüller ve sınıflar için **docstrings**
+- Yapılandırma değerleri için **sabitler**
+- Stylesheet sabitleri ile **merkezi stillendirme**
 
-### Architecture Patterns
+### Mimari Desenler
 
-- **Lazy Loading** - Data loaded only when needed
-- **Global Cache** - Shared data cache across modules
-- **Event Bus** - Inter-module communication
-- **Module Registry** - Dynamic module loading
-- **Service Account** - Centralized authentication
+- **Lazy Loading** - Veriler sadece gerektiğinde yüklenir
+- **Global Cache** - Modüller arası paylaşılan veri önbelleği
+- **Event Bus** - Modüller arası iletişim
+- **Module Registry** - Dinamik modül yükleme
+- **Service Account** - Merkezi kimlik doğrulama
 
-## 🔄 Recent Updates
+## 🔄 Son Güncellemeler
 
-### UI/UX Improvements
-- ✅ **Focus Border Removal** - Clean table selection across all modules
-  - stok_module.py - Table widgets
-  - sevkiyat_module.py - Customer list
-  - sozlesme_module.py - 3 tables (products_table, dialog table, main table)
-  - risk_module.py - Risk table
-  - okc_module.py - OKC table
-  - ssh_module.py - 2 SSH tables
-  - irsaliye_module.py - Document tables
+### UI/UX İyileştirmeleri
+- ✅ **Focus Border Kaldırma** - Tüm modüllerde temiz tablo seçimi
+  - stok_module.py - Tablo widget'ları
+  - sevkiyat_module.py - Müşteri listesi
+  - sozlesme_module.py - 3 tablo (products_table, dialog tablosu, ana tablo)
+  - risk_module.py - Risk tablosu
+  - okc_module.py - OKC tablosu
+  - ssh_module.py - 2 SSH tablosu
+  - irsaliye_module.py - Doküman tabloları
   - CSS: `QTableWidget::item:focus { outline: none; border: none; }`
   - Policy: `setFocusPolicy(Qt.NoFocus)`
 
-### Bug Fixes
-- ✅ **Date Format Fix** - okc_module.py
-  - Changed from `strftime('%d.%m.%Y %H:%M')` to `strftime('%d.%m.%Y')`
-  - Removed "00:00" from date displays
-  - Cleaner date presentation
+### Hata Düzeltmeleri
+- ✅ **Tarih Format Düzeltmesi** - okc_module.py
+  - `strftime('%d.%m.%Y %H:%M')` yerine `strftime('%d.%m.%Y')` kullanıldı
+  - Tarih görünümlerinden "00:00" kaldırıldı
+  - Daha temiz tarih sunumu
 
-- ✅ **Import Fix** - sanalpos_module.py
-  - Added QApplication import
-  - Fixed NameError in clipboard operations
+- ✅ **Import Düzeltmesi** - sanalpos_module.py
+  - QApplication import eklendi
+  - Pano işlemlerinde NameError düzeltildi
 
-### Style Improvements
-- ✅ **Constants Architecture** - irsaliye_module.py
-  - Added CONFIG CONSTANTS section
-  - Added STYLESHEET CONSTANTS section
-  - Bold font implementation
-  - Context menu with copy function
+### Stil İyileştirmeleri
+- ✅ **Sabitler Mimarisi** - irsaliye_module.py
+  - CONFIG CONSTANTS bölümü eklendi
+  - STYLESHEET CONSTANTS bölümü eklendi
+  - Kalın yazı tipi uygulaması
+  - Kopyalama fonksiyonu ile sağ tık menüsü
 
-## 🔧 Technical Stack
+## 🔧 Teknoloji Yığını
 
-### Frontend
-- **PyQt5** - GUI framework
-- **QTableWidget** - Data display
-- **QTabWidget** - Multi-view interface
-- **Custom Stylesheets** - Modern styling
+### Ön Yüz
+- **PyQt5** - GUI framework'ü
+- **QTableWidget** - Veri gösterimi
+- **QTabWidget** - Çoklu görünüm arayüzü
+- **Özel Stylesheet'ler** - Modern stillendirme
 
-### Backend
-- **pandas** - Data manipulation
-- **numpy** - Numerical operations
-- **requests** - HTTP requests
-- **pyodbc** - SQL Server connectivity
+### Arka Yüz
+- **pandas** - Veri manipülasyonu
+- **numpy** - Sayısal işlemler
+- **requests** - HTTP istekleri
+- **pyodbc** - SQL Server bağlantısı
 
-### Integration
+### Entegrasyon
 - **gspread** - Google Sheets API
-- **google-auth** - Service Account authentication
-- **cryptography** - Secure data handling
+- **google-auth** - Service Account kimlik doğrulama
+- **cryptography** - Güvenli veri işleme
 
-### Tools
-- **PyInstaller** - Executable packaging
-- **openpyxl** - Excel file handling
-- **fuzzywuzzy** - Fuzzy string matching
+### Araçlar
+- **PyInstaller** - Çalıştırılabilir paketleme
+- **openpyxl** - Excel dosya işleme
+- **fuzzywuzzy** - Bulanık string eşleştirme
 
-## 📝 License
+## 📝 Lisans
 
-This is proprietary software. All rights reserved.
+Bu özel bir yazılımdır. Tüm hakları saklıdır.
 
-## 👥 Authors
+## 👥 Yazar
 
-**PRG Development Team**
+**İsmail Güneş**
 
-## 🤝 Contributing
+## 🤝 Katkıda Bulunma
 
-This is a private project. Contributions are managed internally.
+Bu özel bir projedir. Katkılar dahili olarak yönetilmektedir.
 
-## 📞 Support
+## 📞 Destek
 
-For internal support, contact the development team.
+Dahili destek için geliştirme ekibiyle iletişime geçin.
 
 ---
 
-**Generated with ❤️ by PRG Development Team**
+**by İsmail Güneş**
 
-Last Updated: November 24, 2025
+Son Güncelleme: 24 Kasım 2025
