@@ -48,13 +48,7 @@ import requests
 # PyQt5 importları
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
-from PyQt5.QtWidgets import *
-from PyQt5.QtCore import *
 from PyQt5.QtGui import *
-
-# QShortcut ve QKeySequence'in kesin olarak import edildiğinden emin olalım
-from PyQt5.QtWidgets import QShortcut, QApplication
-from PyQt5.QtGui import QKeySequence
 
 # Logging konfigürasyonu - ERROR mesajlarını sustur
 logging.basicConfig(level=logging.WARNING)
@@ -359,23 +353,6 @@ class ContractDetailsWindow(QMainWindow):
 
         # ÜRÜNLER tablosuna kopyalama özelliği ekle
         QTimer.singleShot(1000, self.setup_table_copy_functionality)  # 1 saniye sonra setup et
-
-    def setup_table_copy_functionality(self):
-        """Ürünler tablosu için Ctrl+C kısayolunu ayarlar"""
-        try:
-            if hasattr(self, 'products_table') and self.products_table:
-                self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.products_table)
-                self.copy_shortcut.activated.connect(lambda: self.copy_table_selection(self.products_table))
-        except Exception as e:
-            pass
-
-    def copy_table_selection(self, table):
-        """Seçili hücreyi panoya kopyalar"""
-        selected_items = table.selectedItems()
-        if selected_items:
-            # Sadece ilk seçili öğeyi kopyala (tek hücre seçimi varsayımıyla)
-            text = selected_items[0].text()
-            QApplication.clipboard().setText(text)
         
     def add_contract_info_sections(self, layout, contract_info):
         """
@@ -881,13 +858,6 @@ class ContractDetailsWindow(QMainWindow):
             }
         """)
         products_table.setFocusPolicy(Qt.NoFocus)
-
-        # Ctrl+C Kısayolu Ekle
-        try:
-            self.copy_shortcut_products = QShortcut(QKeySequence("Ctrl+C"), products_table)
-            self.copy_shortcut_products.activated.connect(lambda: self.copy_table_selection(products_table))
-        except Exception:
-            pass
 
         # Hücre değişiklik event handler'ını bağla
         products_table.itemChanged.connect(lambda item: self.handle_products_table_edit(item, products_table))
@@ -4592,19 +4562,7 @@ class CariSelectionDialog(QDialog):
             }
         """)
         self.table.setFocusPolicy(Qt.NoFocus)
-        
-        # Ctrl+C Kısayolu
-        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
-        self.copy_shortcut.activated.connect(self.copy_selection)
-        
         main_layout.addWidget(self.table)
-
-    def copy_selection(self):
-        """Seçili hücreyi kopyalar"""
-        selected_items = self.table.selectedItems()
-        if selected_items:
-            text = selected_items[0].text()
-            QApplication.clipboard().setText(text)
 
         # Tabloyu doldur
         self.populate_table(records)
@@ -5189,13 +5147,6 @@ class SozlesmeApp(QMainWindow):
             }
         """)
         self.table.setFocusPolicy(Qt.NoFocus)
-
-        # Ctrl+C Kısayolu Ekle
-        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
-        self.copy_shortcut.activated.connect(self.handle_ctrl_c)
-
-        self.main_layout.addWidget(self.table)
-
         self.main_layout.addWidget(self.table)
 
         # Performans Optimizasyonları
@@ -5548,9 +5499,7 @@ class SozlesmeApp(QMainWindow):
                 
                 # Belirli sütunlarda ara: Malzeme Adı, Cari Adi, Aciklama
                 search_columns = ['Malzeme Adı', 'Cari Adi', 'Aciklama', 'Sozlesme']
-                
-                # Mask'i original_df'in index yapısını kullanarak oluştur
-                mask = pd.Series(False, index=self.original_df.index)
+                mask = pd.Series([False] * len(self.original_df))
                 
                 for col in search_columns:
                     if col in self.original_df.columns:
@@ -6358,18 +6307,3 @@ Eşleşmeyen veriler Kontrol.xlsx dosyasında güncellendi."""
             logging.error(error_msg)
             QMessageBox.critical(self, "Hata", error_msg)
             self.status_label.setText("❌ Kontrol işlemi hatası")
-
-    def handle_ctrl_c(self):
-        """Ctrl+C basıldığında seçili hücreyi kopyalar"""
-        selected_items = self.table.selectedItems()
-        if selected_items:
-            # Sadece ilk seçili hücreyi kopyala
-            text = selected_items[0].text()
-            QApplication.clipboard().setText(text)
-            
-            # Status bar güncelle
-            if hasattr(self, 'status_label'):
-                old_text = self.status_label.text()
-                self.status_label.setText("📋 Kopyalandı")
-                # 3 saniye sonra status'u eski haline getir
-                QTimer.singleShot(3000, lambda: self.status_label.setText(old_text))
