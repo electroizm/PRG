@@ -25,9 +25,9 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QPushButton,
                             QMessageBox, QProgressBar, QTextEdit, QSplitter,
                             QLineEdit, QStatusBar, QHeaderView, QMenu,
                             QScrollArea, QApplication, QMainWindow, QCheckBox,
-                            QProgressDialog, QDialog, QGroupBox)
+                            QProgressDialog, QDialog, QGroupBox, QShortcut)
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer, QSortFilterProxyModel, QMarginsF
-from PyQt5.QtGui import QFont, QPixmap, QPainter, QColor
+from PyQt5.QtGui import QFont, QPixmap, QPainter, QColor, QKeySequence
 from PyQt5.QtPrintSupport import QPrinter, QPrintDialog
 from PyQt5.QtGui import QPageLayout, QPageSize
 
@@ -903,6 +903,10 @@ class SshModule(QMainWindow):
         # Context menu
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
+        
+        # Ctrl+C kısayolu
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        self.copy_shortcut.activated.connect(self.handle_ctrl_c)
 
         layout.addWidget(self.table)
 
@@ -950,6 +954,12 @@ class SshModule(QMainWindow):
             self.status_label.setText("✅ Kopyalandı")
         else:
             self.status_label.setText("⚠️ Boş hücre")
+
+    def handle_ctrl_c(self):
+        """Ctrl+C ile kopyalama işlemi"""
+        item = self.table.currentItem()
+        if item:
+            self.copy_cell(item)
 
     def check_print_button_state(self):
         """Yazdır butonunun durumunu kontrol et - tüm seçili satırların Parça Durumu 'FATR' içermeli"""

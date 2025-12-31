@@ -11,8 +11,8 @@ from io import BytesIO
 import pickle
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar,
-                             QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, QMessageBox)
-from PyQt5.QtGui import QColor, QFont
+                             QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, QMessageBox, QShortcut)
+from PyQt5.QtGui import QColor, QFont, QKeySequence
 
 # Central config import
 import sys
@@ -253,6 +253,10 @@ class VirmanModule(QWidget):
         # Tablo item click event'i bağla
         self.kasa_table.itemClicked.connect(self.on_table_item_clicked)
 
+        # Ctrl+C kısayolu - Kasa tablosu
+        self.copy_shortcut_kasa = QShortcut(QKeySequence("Ctrl+C"), self.kasa_table)
+        self.copy_shortcut_kasa.activated.connect(lambda: self.copy_table_selection(self.kasa_table))
+
         layout.addWidget(self.kasa_table)  # Ana tablo - stretch faktörü yok (dinamik yükseklik)
 
         # Detay bölümü için horizontal layout (Giriş ve Çıkış tabloları)
@@ -288,6 +292,11 @@ class VirmanModule(QWidget):
         self.giris_table.verticalHeader().setVisible(False)
         self.giris_table.setMinimumHeight(250)  # Minimum yükseklik
         self.giris_table.setVisible(False)  # Başlangıçta gizli
+        
+        # Ctrl+C kısayolu - Giriş tablosu
+        self.copy_shortcut_giris = QShortcut(QKeySequence("Ctrl+C"), self.giris_table)
+        self.copy_shortcut_giris.activated.connect(lambda: self.copy_table_selection(self.giris_table))
+        
         self.detail_layout.addWidget(self.giris_table)
 
         # Çıkış Tablosu (Sağ)
@@ -319,6 +328,11 @@ class VirmanModule(QWidget):
         self.cikis_table.verticalHeader().setVisible(False)
         self.cikis_table.setMinimumHeight(250)  # Minimum yükseklik
         self.cikis_table.setVisible(False)  # Başlangıçta gizli
+        
+        # Ctrl+C kısayolu - Çıkış tablosu
+        self.copy_shortcut_cikis = QShortcut(QKeySequence("Ctrl+C"), self.cikis_table)
+        self.copy_shortcut_cikis.activated.connect(lambda: self.copy_table_selection(self.cikis_table))
+        
         self.detail_layout.addWidget(self.cikis_table)
 
         layout.addLayout(self.detail_layout, 1)  # Detay tabloları - kalan alanı alsın
@@ -798,7 +812,8 @@ class VirmanModule(QWidget):
                 cell_range = update['range'].replace('Virman!', '')  # 'C2' formatına çevir
                 value = update['values'][0][0]
                 virman_worksheet.update(cell_range, [[value]], value_input_option='RAW')
-
+        
+        # Progress güncelleme
             updated_cells = len(updates)
             self.status_label.setText(f"✅ {updated_cells} hücre güncellendi ({selected_count} satır)")
             QMessageBox.information(self, "Başarılı", f"{updated_cells} hücre başarıyla güncellendi!\n({selected_count} satır)")
@@ -806,6 +821,22 @@ class VirmanModule(QWidget):
         except Exception as e:
             self.status_label.setText(f"Kaydetme hatası: {str(e)}")
             QMessageBox.critical(self, "Hata", f"Virman verileri kaydedilemedi:\n{str(e)}")
+
+    def copy_table_selection(self, table):
+        """Tablodaki seçili hücreyi/hücreleri kopyala"""
+        from PyQt5.QtWidgets import QApplication
+        
+        selected_items = table.selectedItems()
+        if not selected_items:
+            return
+
+        # Sadece ilk seçili öğeyi kopyala (basitlik için)
+        text = selected_items[0].text()
+        if text:
+            QApplication.clipboard().setText(text)
+            self.status_label.setText("✅ Kopyalandı")
+        else:
+            self.status_label.setText("⚠️ Boş hücre")
 
     def refresh_data(self):
         """Tabloyu yenile"""

@@ -8,6 +8,7 @@ import time
 import numpy as np
 import pandas as pd
 import requests
+import subprocess
 from typing import List
 from pathlib import Path
 from io import BytesIO
@@ -29,12 +30,61 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Central config import
 from central_config import CentralConfigManager
-
-from PyQt5.QtCore import Qt, QTimer, QDateTime
+from PyQt5.QtCore import Qt, QTimer, QDateTime, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QTextEdit, 
                              QTableWidget, QTableWidgetItem, QListWidget, QScrollArea, QHeaderView,
                              QAbstractItemView, QMenu, QAction, QMessageBox, QProgressBar, QApplication)
 from PyQt5.QtGui import QFont, QColor
+
+
+from PyQt5.QtGui import QFont, QColor
+
+
+class MikroUpdateThread(QThread):
+    """Mikro güncelleme işlemlerini sırayla yürüten thread"""
+    status_update = pyqtSignal(str)
+    progress_update = pyqtSignal(int)
+    finished_signal = pyqtSignal()
+    error_signal = pyqtSignal(str)
+
+    def run(self):
+        try:
+            exe_list = [
+                ("BagKodu.exe", r"D:/GoogleDrive/PRG/EXE/BagKodu.exe"),
+                ("BekleyenAPI.exe", r"D:/GoogleDrive/PRG/EXE/BekleyenAPI.exe"),
+                ("Risk.exe", r"D:/GoogleDrive/PRG/EXE/Risk.exe"),
+                ("Stok.exe", r"D:/GoogleDrive/PRG/EXE/Stok.exe"),
+                ("Sevkiyat.exe", r"D:/GoogleDrive/PRG/EXE/Sevkiyat.exe")
+            ]
+            
+            total_steps = len(exe_list)
+            
+            for i, (name, path) in enumerate(exe_list):
+                # Özel karakter temizliği (örn: görünmez unicode karakterleri)
+                clean_path = path.replace('\u202a', '').replace('\u202c', '').strip()
+                
+                if not os.path.exists(clean_path):
+                    self.error_signal.emit(f"Dosya bulunamadı: {name}")
+                    continue
+                    
+                self.status_update.emit(f"🔄 {name} çalıştırılıyor... ({i+1}/{total_steps})")
+                self.progress_update.emit(int((i / total_steps) * 100))
+                
+                # EXE'yi çalıştır ve bitmesini bekle
+                try:
+                    # creationflags=0x08000000 (CREATE_NO_WINDOW) konsol penceresini gizlemek için opsiyonel kullanılabilir
+                    # ancak kullanıcı görsün istiyorsa varsayılan haliyle bırakıyoruz.
+                    subprocess.run(clean_path, check=True, shell=False)
+                except subprocess.CalledProcessError as e:
+                    self.error_signal.emit(f"{name} hatayla sonlandı: {e}")
+                except Exception as e:
+                    self.error_signal.emit(f"{name} çalıştırılamadı: {e}")
+            
+            self.progress_update.emit(100)
+            self.finished_signal.emit()
+            
+        except Exception as e:
+            self.error_signal.emit(f"Beklenmedik hata: {str(e)}")
 
 
 class SevkiyatModule(QWidget):
@@ -960,12 +1010,16 @@ class SevkiyatModule(QWidget):
                     risk_tutari = cari_riskli["Risk"].sum()
             
             # Müşteri bilgi butonunu güncelle - HTML ile sola/sağa yaslama
+            # Müşteri bilgi butonunu güncelle - HTML ile sola/sağa yaslama
+            # Telefon numarasındaki .0'ı temizle
+            formatted_phone = str(self.cari_telefon).replace('.0', '') if self.cari_telefon else ""
+
             if risk_tutari == 0:
-                button_text = f"{self.cari_adi} : {self.cari_telefon}"
+                button_text = f"{self.cari_adi} : {formatted_phone}"
             else:
                 # Sol tarafa müşteri bilgisi, sağ tarafa risk tutarı
-                spaces_needed = max(0, 60 - len(f"{self.cari_adi} : {self.cari_telefon}") - len(f"Risk: {risk_tutari}"))
-                button_text = f"{self.cari_adi} : {self.cari_telefon}{' ' * spaces_needed}Risk: {risk_tutari}"
+                spaces_needed = max(0, 60 - len(f"{self.cari_adi} : {formatted_phone}") - len(f"Risk: {risk_tutari}"))
+                button_text = f"{self.cari_adi} : {formatted_phone}{' ' * spaces_needed}Risk: {risk_tutari}"
             
             self.sozlesmedeki_urunler_button.setText(button_text)
 
@@ -1650,20 +1704,32 @@ class SevkiyatModule(QWidget):
     def _send_whatsapp_message(self, message):
         """WhatsApp mesajı gönderme ortak fonksiyonu"""
         try:
-            # Telefon formatlama
-            phone = str(self.cari_telefon).strip().replace(" ", "").replace("-", "")
+            # 1. Ham veriyi stringe çevir ve temizle
+            phone = str(self.cari_telefon).strip()
+            
+            # 2. Eğer sayı sonu .0 ile bitiyorsa (Float hatası), o kısmı sil
+            if phone.endswith(".0"):
+                phone = phone[:-2]
+            
+            # 3. Sadece rakamları tut (boşluk, tire, + gibi karakterleri temizler)
+            phone = "".join(filter(str.isdigit, phone))
+            
+            # 4. Türkiye formatına getir (Hedef: 905321234567)
             if phone.startswith("0"):
                 phone = "90" + phone[1:]
-            elif not phone.startswith("90"):
+            elif len(phone) == 10: # 532... formatındaysa
                 phone = "90" + phone
             
-            # Telefon numarası validasyonu
-            if len(phone) != 12 or not phone.isdigit():
-                QMessageBox.warning(self, "Hata", "Geçersiz telefon numarası!")
+            # 5. Validasyon (Türkiye numaraları 12 hanedir)
+            if len(phone) != 12:
+                QMessageBox.warning(self, "Hata", f"Geçersiz telefon numarası!\nNumara: {phone}\nLütfen 10 haneli (532...) olarak kontrol edin.")
                 return
             
+            # Mesaj hazırlama ve gönderme
             pyperclip.copy(message)
             encoded_message = urllib.parse.quote(message)
+            
+            # Daha stabil olan wa.me linkini kullanmanızı öneririm
             url = f"whatsapp://send?phone={phone}&text={encoded_message}"
             webbrowser.open(url)
             
@@ -1937,33 +2003,36 @@ class SevkiyatModule(QWidget):
             self.status_label.setText(f"❌ Malzeme bazlı dışa aktarma hatası: {str(e)}")
     
     def run_mikro(self):
-        """Sevkiyat.exe dosyasını çalıştır"""
+        """Mikro güncelleme işlemlerini başlat"""
         try:
-            exe_path = r"D:/GoogleDrive/PRG/EXE/Sevkiyat.exe"
-            if not os.path.exists(exe_path):
-                self.status_label.setText(f"❌ Sevkiyat.exe bulunamadı: {exe_path}")
-                return
-            
             # Progress bar'ı göster ve butonları devre dışı bırak
             self.progress_bar.setVisible(True)
-            self.progress_bar.setRange(0, 0)  # Indeterminate progress
-            self.status_label.setText("🔄 Sevkiyat.exe çalıştırılıyor...")
+            self.progress_bar.setRange(0, 100)
+            self.status_label.setText("� Mikro güncelleme işlemi başlatılıyor...")
             self.set_buttons_enabled(False)
             self.mikro_calisiyor = True
             
-            QApplication.processEvents()
-            
-            os.startfile(exe_path)
-            
-            # Sevkiyat.exe'nin çalışması için bekleme (risk modülü ile aynı süre)
-            # 7 saniye sonra program bitmiş sayıp kontrol et
-            QTimer.singleShot(7000, self.on_mikro_finished)
+            # Thread'i oluştur ve başlat
+            self.update_thread = MikroUpdateThread()
+            self.update_thread.status_update.connect(self.status_label.setText)
+            self.update_thread.progress_update.connect(self.progress_bar.setValue)
+            self.update_thread.finished_signal.connect(self.on_mikro_sequence_finished)
+            self.update_thread.error_signal.connect(lambda msg: self.status_label.setText(f"⚠️ {msg}"))
+            self.update_thread.start()
             
         except Exception as e:
-            self.status_label.setText(f"❌ Program çalıştırma hatası: {str(e)}")
+            self.status_label.setText(f"❌ Başlatma hatası: {str(e)}")
             self.progress_bar.setVisible(False)
             self.set_buttons_enabled(True)
             self.mikro_calisiyor = False
+    
+    def on_mikro_sequence_finished(self):
+        """Tüm EXE'ler tamamlandığında"""
+        self.status_label.setText("✅ Tüm güncellemeler tamamlandı, veriler yenileniyor...")
+        self.progress_bar.setValue(100)
+        
+        # Google Sheets'e verinin gitmesi için kısa bir bekleme
+        QTimer.singleShot(2000, self.on_mikro_finished)
     
     def on_mikro_finished(self):
         """Mikro program bittikten sonra"""

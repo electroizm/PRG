@@ -16,10 +16,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from central_config import CentralConfigManager # type: ignore
 
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                             QTableWidget, QTableWidgetItem, QHeaderView,
-                             QAbstractItemView, QMenu, QProgressBar, QLabel, QApplication)
-from PyQt5.QtGui import QFont
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+                             QAbstractItemView, QMenu, QProgressBar, QLabel, QApplication, QShortcut,
+                             QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox, QFrame)
+from PyQt5.QtGui import QFont, QKeySequence
 
 # Logger
 logger = logging.getLogger(__name__)
@@ -464,6 +464,10 @@ class RiskApp(QWidget):
         self.refresh_button.clicked.connect(lambda: self.load_data(force_reload=True))
         self.export_button.clicked.connect(self.export_to_excel)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
+        
+        # Ctrl+C kısayolu
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        self.copy_shortcut.activated.connect(self.handle_ctrl_c)
 
     # ================== DATA LOADING ==================
     def load_data(self, force_reload: bool = False):
@@ -780,6 +784,12 @@ class RiskApp(QWidget):
             self.status_label.setText("✅ Kopyalandı")
         else:
             self.status_label.setText("⚠️ Boş hücre")
+
+    def handle_ctrl_c(self):
+        """Ctrl+C ile kopyalama işlemi"""
+        item = self.table.currentItem()
+        if item:
+            self.copy_cell(item)
 
     # ================== UTILITY ==================
     def set_buttons_enabled(self, enabled: bool):

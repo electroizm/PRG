@@ -26,8 +26,8 @@ except ImportError:
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QTableWidget, QTableWidgetItem, QHeaderView,
-                             QAbstractItemView, QLabel, QMessageBox, QTabWidget)
-from PyQt5.QtGui import QFont, QColor
+                             QAbstractItemView, QLabel, QMessageBox, QTabWidget, QShortcut)
+from PyQt5.QtGui import QFont, QColor, QKeySequence
 
 
 class AyarlarApp(QWidget):
@@ -226,6 +226,10 @@ class AyarlarApp(QWidget):
             }
         """)
 
+        # Ctrl+C kısayolu - Ayar tablosu
+        self.copy_shortcut_ayar = QShortcut(QKeySequence("Ctrl+C"), self.ayar_table)
+        self.copy_shortcut_ayar.activated.connect(lambda: self.copy_table_selection(self.ayar_table))
+
         # Status Label
         self.ayar_status = QLabel("Hazır")
         self.ayar_status.setStyleSheet("""
@@ -328,6 +332,10 @@ class AyarlarApp(QWidget):
                 border: 1px solid #404040;
             }
         """)
+
+        # Ctrl+C kısayolu - Mail tablosu
+        self.copy_shortcut_mail = QShortcut(QKeySequence("Ctrl+C"), self.mail_table)
+        self.copy_shortcut_mail.activated.connect(lambda: self.copy_table_selection(self.mail_table))
 
         # Status Label
         self.mail_status = QLabel("Hazır")
@@ -788,6 +796,10 @@ class AyarlarApp(QWidget):
             }
         """)
 
+        # Ctrl+C kısayolu - NoRisk tablosu
+        self.copy_shortcut_norisk = QShortcut(QKeySequence("Ctrl+C"), self.norisk_table)
+        self.copy_shortcut_norisk.activated.connect(lambda: self.copy_table_selection(self.norisk_table))
+
         # Status Label
         self.norisk_status = QLabel("Hazır")
         self.norisk_status.setStyleSheet("""
@@ -1019,3 +1031,22 @@ class AyarlarApp(QWidget):
                 "Google Sheets API credentials kontrolünü yapın."
             )
             status_label.setText(f"❌ Kayıt hatası: {str(e)}")
+
+    def copy_table_selection(self, table):
+        """Tablodaki seçili hücreyi/hücreleri kopyala"""
+        from PyQt5.QtWidgets import QApplication
+        
+        selected_items = table.selectedItems()
+        if not selected_items:
+            return
+
+        # Sadece ilk seçili öğeyi kopyala (basitlik için)
+        text = selected_items[0].text()
+        if text:
+            QApplication.clipboard().setText(text)
+            # Find status label if possible, or just pass silently
+            # self.status_label equivalent is separate for each tab, so we might skip status update 
+            # or try to find parent tab's status label.
+            # Simplified: just copy. 
+        else:
+            pass

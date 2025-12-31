@@ -20,8 +20,8 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QTableWidget, QTableWidgetItem, QHeaderView, 
                              QAbstractItemView, QMenu, QProgressBar, QLabel,
                              QCheckBox, QComboBox, QInputDialog, QLineEdit,
-                             QMessageBox, QApplication)
-from PyQt5.QtGui import QFont, QColor, QIntValidator
+                             QMessageBox, QApplication, QShortcut)
+from PyQt5.QtGui import QFont, QColor, QIntValidator, QKeySequence
 
 
 class KasaApp(QWidget):
@@ -599,6 +599,10 @@ class KasaApp(QWidget):
         self.dekont_checkbox.clicked.connect(self._on_dekont_checkbox_clicked)
         self.alacak_checkbox.clicked.connect(self._on_alacak_checkbox_clicked)
 
+        # Ctrl+C kısayolu
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        self.copy_shortcut.activated.connect(self.handle_ctrl_c)
+
     def load_data(self, force_reload=False):
         """
         Kasa sayfasından verileri yükle (cache-aware)
@@ -1061,6 +1065,12 @@ class KasaApp(QWidget):
             self.status_label.setText("✅ Kopyalandı")
         else:
             self.status_label.setText("⚠️ Boş hücre")
+    
+    def handle_ctrl_c(self):
+        """Ctrl+C ile kopyalama işlemi"""
+        item = self.table.currentItem()
+        if item:
+            self.copy_cell(item)
     
     def set_buttons_enabled(self, enabled: bool):
         """Butonları aktif/pasif yap"""

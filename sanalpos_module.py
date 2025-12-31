@@ -19,8 +19,8 @@ from central_config import CentralConfigManager
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, 
-                             QMenu, QProgressBar, QLabel, QApplication)
-from PyQt5.QtGui import QFont, QColor
+                             QMenu, QProgressBar, QLabel, QApplication, QShortcut)
+from PyQt5.QtGui import QFont, QColor, QKeySequence
 
 
 class SanalPosApp(QMainWindow):
@@ -205,6 +205,10 @@ class SanalPosApp(QMainWindow):
         self.micro_button.clicked.connect(self.run_mikro)
         # Verileri Yenile butonu: cache'i bypass et, Google Sheets'ten çek
         self.refresh_button.clicked.connect(lambda: self.load_sanalpos_data(force_reload=True))
+
+        # Ctrl+C kısayolu
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        self.copy_shortcut.activated.connect(self.handle_ctrl_c)
 
     def get_google_sheets_url(self, sheet_name, format_type="csv"):
         """Generate Google Sheets export URL for specific sheet"""
@@ -581,3 +585,9 @@ class SanalPosApp(QMainWindow):
             self.status_label.setText("✅ Kopyalandı")
         else:
             self.status_label.setText("⚠️ Boş hücre")
+
+    def handle_ctrl_c(self):
+        """Ctrl+C ile kopyalama işlemi"""
+        item = self.table.currentItem()
+        if item:
+            self.copy_cell(item)

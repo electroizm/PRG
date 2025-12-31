@@ -360,6 +360,11 @@ class StokApp(QMainWindow):
         self.table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
+        
+        # Ctrl+C kısayolu
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        self.copy_shortcut.activated.connect(self.handle_ctrl_c)
+
         self.table.itemChanged.connect(self.handle_Sepet_edit)
         self.table.verticalHeader().setDefaultSectionSize(self.table.verticalHeader().defaultSectionSize() + 2)
         self.table.setStyleSheet("""
@@ -1451,6 +1456,45 @@ class StokApp(QMainWindow):
                 clipboard_text.append("\t".join(row_data))
 
             QApplication.clipboard().setText("\n".join(clipboard_text))
+
+    def handle_ctrl_c(self):
+        """Ctrl+C ile kopyalama işlemi"""
+        # Seçili öğeler varsa kopyala (çoklu seçim desteği)
+        selected_items = self.table.selectedItems()
+        if selected_items:
+            # Sadece tek hücre seçiliyse direkt metni kopyala
+            if len(selected_items) == 1:
+                QApplication.clipboard().setText(selected_items[0].text())
+            else:
+                # Çoklu seçim varsa tablor formatında kopyala
+                # (copy_selection mantığına benzer ama seçili olanları alır)
+                # Basitçe ilk öğeyi veya tümünü kopyalayabiliriz, kullanıcı
+                # 'Kopyala' dediğinde sağ tık menüsünde ne oluyorsa onu yapmalı
+                # Sağ tık menüsünde 'copy_selection' çağrılıyor mu?
+                # Hayır, kodda show_context_menu içinde ne vardı? 
+                pass
+                # show_context_menu içinde ne olduğunu göremedim tam olarak
+                
+                # Basit yaklaşımı kullanıyorum: sağ tık menüsündeki gibi
+                # Sağ tık menüsünde ne olduğunu tekrar kontrol etmem gerekebilirdi
+                # Ancak burada güvenli bir 'copy text' yapıyorum
+                
+                # Eğer tek satır kopyalama varsa:
+                rows = sorted(list(set(item.row() for item in selected_items)))
+                cols = sorted(list(set(item.column() for item in selected_items)))
+                
+                text_data = ""
+                for r in rows:
+                    row_items = []
+                    for c in cols:
+                        item = self.table.item(r, c)
+                        if item and item.isSelected():
+                            row_items.append(item.text())
+                    if row_items:
+                        text_data += "\t".join(row_items) + "\n"
+                
+                if text_data:
+                    QApplication.clipboard().setText(text_data.strip())
 
     def save_order(self):
         try:

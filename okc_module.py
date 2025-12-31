@@ -22,8 +22,8 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
                              QLabel, QPushButton, QTableWidget, QTableWidgetItem,
                              QHeaderView, QAbstractItemView, QMenu, QProgressBar,
-                             QMessageBox, QDialog, QDialogButtonBox, QApplication)
-from PyQt5.QtGui import QIntValidator, QFont
+                             QMessageBox, QDialog, QDialogButtonBox, QApplication, QShortcut)
+from PyQt5.QtGui import QIntValidator, QFont, QKeySequence
 
 # Logger
 logging.basicConfig(level=logging.WARNING)
@@ -344,7 +344,26 @@ class OKCYazarKasaApp(QWidget):
         table.setShowGrid(True)
         table.cellDoubleClicked.connect(self.on_row_double_click)
         table.customContextMenuRequested.connect(self.show_context_menu)
+        
+        # Ctrl+C Kısayolu Ekle
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), table)
+        self.copy_shortcut.activated.connect(self.handle_ctrl_c)
+        
         return table
+
+    def handle_ctrl_c(self):
+        """Ctrl+C basıldığında seçili hücreyi kopyalar ve kullanıcıya bildirim verir"""
+        selected_items = self.table.selectedItems()
+        if selected_items:
+            # Sadece ilk seçili hücreyi kopyala (çoklu seçim olsa bile)
+            text = selected_items[0].text()
+            QApplication.clipboard().setText(text)
+            
+            # Status bar güncelle
+            old_text = self.status_label.text()
+            self.status_label.setText("📋 Hücre içeriği kopyalandı")
+            # 2 saniye sonra status'u eski haline getir
+            QTimer.singleShot(2000, lambda: self.status_label.setText(old_text))
 
     def _create_status_bar(self) -> QWidget:
         """Status bar widget'ını oluştur"""
