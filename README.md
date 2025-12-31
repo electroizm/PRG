@@ -1,6 +1,6 @@
-# PRG Modüler Yönetim Sistemi
+# PRG
 
-Bu proje, işletmenin ERP (Enterprise Resource Planning) süreçlerini, depo yönetimini, sevkiyat planlamasını ve finansal operasyonlarını tek bir çatı altında toplayan kapsamlı, modüler bir masaüstü uygulamasıdır. Python ve PyQt5 kullanılarak geliştirilmiş olup, modern bir yazılım mimarisine (Event-Driven, Command Pattern) sahiptir.
+Bu proje, işletmenin ERP süreçlerini, depo yönetimini, sevkiyat planlamasını ve finansal operasyonlarını tek bir çatı altında toplayan kapsamlı, modüler bir masaüstü uygulamasıdır. Python ve PyQt5 kullanılarak geliştirilmiş olup, modern bir yazılım mimarisine (Event-Driven, Command Pattern) sahiptir.
 
 ## 🏗️ Mimari Yapı
 
@@ -86,4 +86,4 @@ Uygulama, her biri belirli bir iş alanına odaklanan bağımsız modüllerden o
     </table>
 </div>
 
-**Proje Başlangıç Tarihi:** 15.11.2024
+## **Proje Başlangıç Tarihi:** 15.11.2024
