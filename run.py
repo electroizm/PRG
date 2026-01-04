@@ -20,7 +20,8 @@ import os
 # Bu sayede central_config modülü import edilebilir
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
-sys.path.insert(0, parent_dir)
+sys.path.insert(0, parent_dir)   # central_config icin
+sys.path.insert(0, current_dir)  # PRG modulleri icin (oncelikli)
 
 if __name__ == "__main__":
     try:
