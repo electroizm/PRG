@@ -25,7 +25,10 @@ sys.path.insert(0, current_dir)  # PRG modulleri icin (oncelikli)
 
 if __name__ == "__main__":
     try:
-        from main import main  # type: ignore
+        if getattr(sys, 'frozen', False):
+            from PRG.main import main  # type: ignore  # PyInstaller exe
+        else:
+            from main import main  # type: ignore  # Normal calistirma
         main()
     except ImportError as e:
         print("ERROR: Module import error:", str(e))

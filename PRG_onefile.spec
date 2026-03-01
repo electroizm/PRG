@@ -37,6 +37,7 @@ prg_hidden_imports = [
     'PRG.ssh_module',
     'PRG.stok_module',
     'PRG.virman_module',
+    'PRG.barkod_module',
 ]
 
 # Harici bağımlılıklar
@@ -123,6 +124,7 @@ datas = [
     (os.path.join(prg_dir, 'ssh_module.py'), 'PRG'),
     (os.path.join(prg_dir, 'stok_module.py'), 'PRG'),
     (os.path.join(prg_dir, 'virman_module.py'), 'PRG'),
+    (os.path.join(prg_dir, 'barkod_module.py'), 'PRG'),
 ]
 
 # Certifi SSL sertifikalarını ekle
@@ -130,7 +132,7 @@ datas += collect_data_files('certifi')
 
 a = Analysis(
     [entry_script],
-    pathex=[spec_dir, prg_dir],
+    pathex=[prg_dir, spec_dir],
     binaries=[],
     datas=datas,
     hiddenimports=hidden_imports,

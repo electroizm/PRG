@@ -138,6 +138,7 @@ class ModernMainApp(QMainWindow):
         modules_config = [
             ModuleConfig("stok", "Stok", ModuleType.STOK, StokApp),
             ModuleConfig("sevkiyat", "Sevkiyat", ModuleType.SEVKIYAT, SevkiyatModule),
+            ModuleConfig("barkod", "Barkod", ModuleType.BARKOD, BarkodApp),
             ModuleConfig("sozlesme", "Sözleşme", ModuleType.SOZLESME, SozlesmeApp),
             ModuleConfig("okc", "ÖKC YazarKasa", ModuleType.OKC, OKCYazarKasaApp),
             ModuleConfig("risk", "Risk", ModuleType.RISK, RiskApp),
@@ -147,7 +148,6 @@ class ModernMainApp(QMainWindow):
             ModuleConfig("sanalpos", "Sanal Pos", ModuleType.SANALPOS, SanalPosApp),
             ModuleConfig("irsaliye", "İrsaliye", ModuleType.IRSALIYE, IrsaliyeWindow),
             ModuleConfig("fiyat", "Fiyat", ModuleType.FIYAT, FiyatModule),
-            ModuleConfig("barkod", "Barkod", ModuleType.BARKOD, BarkodApp),
             ModuleConfig("ayarlar", "Ayarlar", ModuleType.AYARLAR, AyarlarApp),
         ]
 

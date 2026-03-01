@@ -5,7 +5,7 @@ Bu paket, dosyadaki tüm modülleri
 ayrı dosyalara bölerek organize edilmiş halidir.
 """
 
-from main import main
+from .main import main
 
 __version__ = "2025.11.11"
 __author__ = "İsmail Güneş"
