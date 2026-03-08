@@ -187,6 +187,18 @@ GIRIS_TABLE_COLUMNS = [
     ('okuma_durumu', 'Okuma Durumu'),
 ]
 
+SEVK_TABLE_COLUMNS = [
+    ('evrakno_sira', u'Evrak S\u0131ra'),
+    ('tarih', 'Tarih'),
+    ('stok_kod', 'Stok Kod'),
+    ('miktar', 'Miktar'),
+    ('cikis_depo', u'\u00c7\u0131k\u0131\u015f Depo'),
+    ('giris_depo', u'Giri\u015f Depo'),
+    ('paket_sayisi', 'Paket'),
+    ('malzeme_adi', u'Malzeme Ad\u0131'),
+    ('okuma_durumu', 'Okuma Durumu'),
+]
+
 MIKRO_SQL_QUERY = """
     SELECT
         sth.sth_evrakno_seri,
@@ -278,6 +290,29 @@ MIKRO_GIRIS_SQL_QUERY = """
         ON sto.sto_kod = sth.sth_stok_kod
         AND (sto.sto_pasif_fl IS NULL OR sto.sto_pasif_fl = 0)
     WHERE sth.sth_evraktip = 12
+        AND sth.sth_tarih >= ?
+    ORDER BY sth.sth_evrakno_sira DESC
+"""
+
+MIKRO_SEVK_SQL_QUERY = """
+    SELECT
+        sth.sth_evrakno_seri,
+        sth.sth_evrakno_sira,
+        CONVERT(DATE, sth.sth_tarih) AS tarih,
+        sth.sth_stok_kod,
+        sth.sth_miktar,
+        dbo.fn_StokHarEvrTip(sth.sth_evraktip) AS evrak_adi,
+        dbo.fn_StokHarDepoIsmi(sth.sth_giris_depo_no, sth.sth_cikis_depo_no, 1) AS cikis_depo,
+        dbo.fn_StokHarDepoIsmi(sth.sth_giris_depo_no, sth.sth_cikis_depo_no, 0) AS giris_depo,
+        bar.bar_serino_veya_bagkodu AS bag_kodu,
+        sto.sto_isim AS malzeme_adi
+    FROM dbo.STOK_HAREKETLERI sth WITH (NOLOCK)
+    LEFT JOIN dbo.BARKOD_TANIMLARI bar WITH (NOLOCK)
+        ON bar.bar_stokkodu = sth.sth_stok_kod
+    LEFT JOIN dbo.STOKLAR sto WITH (NOLOCK)
+        ON sto.sto_kod = sth.sth_stok_kod
+        AND (sto.sto_pasif_fl IS NULL OR sto.sto_pasif_fl = 0)
+    WHERE sth.sth_evraktip = 2
         AND sth.sth_tarih >= ?
     ORDER BY sth.sth_evrakno_sira DESC
 """
@@ -816,6 +851,98 @@ class SupabaseClient:
             response = requests.delete(url, headers=self.headers, params=params, timeout=30)
             response.raise_for_status()
 
+    # ---------- Sevk Fisi ----------
+    def upsert_sevk_batch(self, records: list):
+        url = f"{self.rest_url}/sevk_fisi"
+        params = {'on_conflict': 'evrakno_seri,evrakno_sira,stok_kod'}
+        headers = {**self.headers, 'Prefer': 'resolution=merge-duplicates'}
+        response = requests.post(url, headers=headers, params=params,
+                                 json=records, timeout=30)
+        response.raise_for_status()
+
+    def get_all_sevk_fisleri(self, limit=2000, min_tarih=None) -> list:
+        """sevk_fisi tablosundan kayitlari al. min_tarih: YYYY-MM-DD formatinda"""
+        url = f"{self.rest_url}/sevk_fisi"
+        all_data = []
+        page_size = 500
+        offset = 0
+        select_cols = 'id,evrakno_seri,evrakno_sira,tarih,stok_kod,miktar,cikis_depo,giris_depo,paket_sayisi,malzeme_adi,evrak_adi'
+        while offset < limit:
+            current_limit = min(page_size, limit - offset)
+            params = {
+                'select': select_cols,
+                'order': 'evrakno_sira.desc',
+                'limit': str(current_limit),
+                'offset': str(offset)
+            }
+            if min_tarih:
+                params['tarih'] = f'gte.{min_tarih}'
+            response = _request_with_retry(requests.get, url, headers=self.headers, params=params, timeout=60)
+            response.raise_for_status()
+            batch = response.json()
+            all_data.extend(batch)
+            if len(batch) < current_limit:
+                break
+            offset += current_limit
+        return all_data
+
+    def get_sevk_readings_by_fis_no(self, fis_no_list: list) -> list:
+        """sevk_fisi_okumalari tablosundan okuma kayitlarini al"""
+        if not fis_no_list:
+            return []
+        all_readings = []
+        batch_size = 50
+        for i in range(0, len(fis_no_list), batch_size):
+            batch = fis_no_list[i:i + batch_size]
+            values = ','.join(str(v) for v in batch)
+            url = f"{self.rest_url}/sevk_fisi_okumalari"
+            params = {
+                'select': 'fis_no,kalem_id,stok_kod,paket_sira,qr_kod,kullanici,created_at',
+                'fis_no': f'in.({values})',
+                'limit': '10000'
+            }
+            response = _request_with_retry(requests.get, url, headers=self.headers, params=params, timeout=60)
+            response.raise_for_status()
+            all_readings.extend(response.json())
+        return all_readings
+
+    def get_sevk_fis_no_with_readings(self) -> set:
+        """sevk_fisi_okumalari tablosundaki benzersiz fis_no degerlerini al"""
+        url = f"{self.rest_url}/sevk_fisi_okumalari"
+        params = {
+            'select': 'fis_no',
+            'limit': '10000'
+        }
+        response = _request_with_retry(requests.get, url, headers=self.headers, params=params, timeout=30)
+        response.raise_for_status()
+        return set(row['fis_no'] for row in response.json() if row.get('fis_no'))
+
+    def get_sevk_all_evrakno_sira(self, min_tarih: str = None) -> set:
+        """sevk_fisi'ndeki benzersiz evrakno_sira degerlerini al"""
+        url = f"{self.rest_url}/sevk_fisi"
+        params = {
+            'select': 'evrakno_sira',
+            'limit': '10000'
+        }
+        if min_tarih:
+            params['tarih'] = f'gte.{min_tarih}'
+        response = _request_with_retry(requests.get, url, headers=self.headers, params=params, timeout=30)
+        response.raise_for_status()
+        return set(row['evrakno_sira'] for row in response.json() if row.get('evrakno_sira'))
+
+    def delete_sevk_by_evrakno_sira_list(self, sira_list: list):
+        """sevk_fisi'nden belirtilen evrakno_sira degerleri icin kayitlari sil"""
+        if not sira_list:
+            return
+        batch_size = 50
+        for i in range(0, len(sira_list), batch_size):
+            batch = sira_list[i:i + batch_size]
+            values = ','.join(str(v) for v in batch)
+            url = f"{self.rest_url}/sevk_fisi"
+            params = {'evrakno_sira': f'in.({values})'}
+            response = requests.delete(url, headers=self.headers, params=params, timeout=30)
+            response.raise_for_status()
+
     # ---------- Nakliye ----------
     def get_all_nakliye_fisleri(self, limit=2000, min_tarih=None) -> list:
         """nakliye_fisleri tablosundan kayitlari al. min_tarih: YYYYMMDD formatinda (orn: '20260226')"""
@@ -1199,6 +1326,70 @@ class GirisLoadDataThread(QThread):
                 logger.info(f"Giris: {len(readings)} okuma kaydi yuklendi")
             except Exception as e:
                 logger.warning(f"Giris okuma verileri yuklenemedi: {e}")
+
+            self.data_loaded.emit(all_data, readings_map)
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+
+# ================== SEVK LOAD DATA THREAD ==================
+class SevkLoadDataThread(QThread):
+    """Supabase'den sevk fisi + okuma verilerini arka planda yukler"""
+
+    data_loaded = pyqtSignal(list, dict)  # (all_data, readings_map)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, supabase_client: SupabaseClient, min_tarih=None):
+        super().__init__()
+        self.supabase_client = supabase_client
+        self.min_tarih = min_tarih
+
+    def run(self):
+        try:
+            all_data = self.supabase_client.get_all_sevk_fisleri(limit=5000, min_tarih=self.min_tarih)
+
+            readings_map = {}
+            try:
+                fis_no_list = list(set(
+                    row['evrakno_sira'] for row in all_data
+                    if row.get('evrakno_sira')
+                ))
+                readings = self.supabase_client.get_sevk_readings_by_fis_no(fis_no_list)
+
+                from datetime import datetime, timedelta, timezone
+                for r in readings:
+                    kalem_id = r.get('kalem_id')
+                    if not kalem_id:
+                        continue
+                    ps = int(r.get('paket_sira', 0) or 0)
+                    qr = str(r.get('qr_kod', ''))
+
+                    if kalem_id not in readings_map:
+                        readings_map[kalem_id] = {}
+
+                    read_type = 'manual' if qr.startswith('MANUEL_TOPLU_') else 'scanner'
+                    raw_time = r.get('created_at', '')
+                    tr_time = ''
+                    if raw_time:
+                        try:
+                            dt = datetime.fromisoformat(raw_time.replace('Z', '+00:00'))
+                            dt_tr = dt.astimezone(timezone(timedelta(hours=3)))
+                            tr_time = dt_tr.strftime('%d.%m.%Y %H:%M')
+                        except Exception:
+                            tr_time = str(raw_time)[:16]
+
+                    info = {
+                        'type': read_type,
+                        'user': r.get('kullanici', '') or '',
+                        'time': tr_time,
+                    }
+                    if ps not in readings_map[kalem_id]:
+                        readings_map[kalem_id][ps] = []
+                    readings_map[kalem_id][ps].append(info)
+
+                logger.info(f"Sevk: {len(readings)} okuma kaydi yuklendi")
+            except Exception as e:
+                logger.warning(f"Sevk okuma verileri yuklenemedi: {e}")
 
             self.data_loaded.emit(all_data, readings_map)
         except Exception as e:
@@ -2176,6 +2367,287 @@ class GirisSyncThread(QThread):
             rows = cursor.fetchall()
 
         logger.info(f"Giris: Mikro'da son 7 gunde {len(rows)} aktif giris evrakno_sira bulundu")
+        return set(row[0] for row in rows)
+
+    def cancel(self):
+        self.is_cancelled = True
+
+
+# ================== SEVK FISI SYNC THREAD ==================
+class SevkSyncThread(QThread):
+    """Mikro -> Supabase sevk fisi senkronizasyon thread'i"""
+
+    progress_updated = pyqtSignal(int, str)
+    sync_finished = pyqtSignal(dict)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, supabase_client: SupabaseClient, dogtas_client: DogtasApiClient = None):
+        super().__init__()
+        self.supabase_client = supabase_client
+        self.dogtas_client = dogtas_client
+        self.is_cancelled = False
+
+    def run(self):
+        try:
+            # 1. Supabase'den okumasi olan fis numaralarini al
+            self.progress_updated.emit(5, "Okumasi olan fisler kontrol ediliyor...")
+            okunan_fis_nolar = self.supabase_client.get_sevk_fis_no_with_readings()
+            logger.info(f"Sevk: Okumasi olan {len(okunan_fis_nolar)} fis bulundu")
+
+            if self.is_cancelled:
+                return
+
+            # 2. Mikro SQL Server'dan son 7 gunun sevk fislerini cek
+            self.progress_updated.emit(15, "Mikro SQL Server'a baglaniliyor...")
+            from datetime import timedelta
+            min_tarih = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+            fisler = self._fetch_from_mikro(min_tarih)
+
+            if self.is_cancelled:
+                return
+
+            if not fisler:
+                self.sync_finished.emit({
+                    'eklenen': 0,
+                    'atlanan': 0,
+                    'evrak_sayisi': 0,
+                    'toplam': 0,
+                    'mesaj': u"Mikro'dan son 7 g\u00fcnde Sevk Fi\u015fi bulunamad\u0131."
+                })
+                return
+
+            # 3. Okumasi olan fisleri filtrele (dokunma)
+            fisler_filtreli = [
+                f for f in fisler
+                if f['sth_evrakno_sira'] not in okunan_fis_nolar
+            ]
+            atlanan_okumali = len(fisler) - len(fisler_filtreli)
+            if atlanan_okumali > 0:
+                logger.info(f"Sevk: {atlanan_okumali} fis okumasi oldugu icin atlanacak")
+
+            self.progress_updated.emit(40, f"{len(fisler_filtreli)} kayit islenecek ({atlanan_okumali} okumali atlandi)")
+
+            if not fisler_filtreli:
+                silinen = 0
+                if not self.is_cancelled:
+                    self.progress_updated.emit(96, "Iptal edilen fisler kontrol ediliyor...")
+                    try:
+                        silinen = self._cleanup_cancelled_fis(okunan_fis_nolar)
+                    except Exception as e:
+                        logger.warning(f"Sevk fis temizleme hatasi: {e}")
+
+                self.progress_updated.emit(100, "Senkronizasyon tamamlandi")
+                mesaj = f"Son 7 gunde {len(fisler)} fis bulundu, tumunun okumasi var."
+                if silinen > 0:
+                    mesaj += f" {silinen} iptal edilmis fis silindi."
+                self.sync_finished.emit({
+                    'eklenen': 0,
+                    'atlanan': atlanan_okumali,
+                    'evrak_sayisi': 0,
+                    'toplam': len(fisler),
+                    'silinen': silinen,
+                    'mesaj': mesaj
+                })
+                return
+
+            # 4. Benzersiz product code'lari topla
+            product_codes = list(set(
+                row['sth_stok_kod'][:10]
+                for row in fisler_filtreli
+                if row.get('sth_stok_kod')
+            ))
+
+            # 5. Dogtas API'den paket bilgisi al
+            paket_bilgileri = {}
+            if self.dogtas_client and product_codes:
+                self.progress_updated.emit(50, f"{len(product_codes)} urun icin paket bilgisi aliniyor...")
+                try:
+                    paket_bilgileri = self.dogtas_client.get_product_packages(product_codes)
+                    logger.info(f"Sevk: {len(paket_bilgileri)} urun icin paket bilgisi alindi")
+                except Exception as e:
+                    logger.warning(f"Dogtas API hatasi (devam ediliyor): {e}")
+
+            if self.is_cancelled:
+                return
+
+            # 6. Veriyi donustur
+            self.progress_updated.emit(60, "Veriler donusturuluyor...")
+            records = []
+            for fis in fisler_filtreli:
+                product_code = fis['sth_stok_kod'][:10] if fis.get('sth_stok_kod') else None
+                paket_info = paket_bilgileri.get(product_code) if product_code else None
+
+                tarih_val = fis.get('tarih')
+                tarih_str = str(tarih_val) if tarih_val is not None else None
+
+                record = {
+                    'evrakno_seri': fis.get('sth_evrakno_seri', '') or '',
+                    'evrakno_sira': fis['sth_evrakno_sira'],
+                    'tarih': tarih_str,
+                    'stok_kod': fis.get('sth_stok_kod'),
+                    'miktar': float(fis.get('sth_miktar', 0) or 0),
+                    'cikis_depo': fis.get('cikis_depo'),
+                    'giris_depo': fis.get('giris_depo'),
+                    'evrak_adi': fis.get('evrak_adi') or u'Sevk Fi\u015fi',
+                    'paket_sayisi': paket_info['paketSayisi'] if paket_info else 1,
+                    'malzeme_adi': fis.get('malzeme_adi'),
+                }
+                records.append(record)
+
+            # Duplicate kayitlari temizle
+            unique_records = {}
+            for rec in records:
+                key = (rec['evrakno_seri'], rec['evrakno_sira'], rec['stok_kod'])
+                unique_records[key] = rec
+            records = list(unique_records.values())
+            logger.info(f"Sevk: Duplicate temizleme sonrasi: {len(records)} benzersiz kayit")
+
+            # 7. Supabase'e batch upsert
+            self.progress_updated.emit(65, "Supabase'e kaydediliyor...")
+            eklenen = 0
+            atlanan = 0
+
+            for i in range(0, len(records), BATCH_SIZE):
+                batch = records[i:i + BATCH_SIZE]
+                try:
+                    self.supabase_client.upsert_sevk_batch(batch)
+                    eklenen += len(batch)
+                except requests.exceptions.HTTPError as e:
+                    hata_detay = e.response.text if e.response is not None else str(e)
+                    logger.error(f"Sevk batch upsert hatasi (index {i}): {hata_detay}")
+                    self.progress_updated.emit(0, f"Batch hatasi: {hata_detay[:200]}")
+                    atlanan += len(batch)
+                except Exception as e:
+                    logger.error(f"Sevk batch upsert hatasi (index {i}): {e}")
+                    atlanan += len(batch)
+
+                progress = 65 + int(((i + len(batch)) / len(records)) * 30)
+                self.progress_updated.emit(
+                    min(progress, 95),
+                    f"{eklenen}/{len(records)} kayit kaydedildi"
+                )
+                if self.is_cancelled:
+                    return
+
+            # Benzersiz evrak sayisi
+            evrak_set = set()
+            for f in fisler_filtreli:
+                key = f"{f.get('sth_evrakno_seri', '')}_{f['sth_evrakno_sira']}"
+                evrak_set.add(key)
+
+            # 8. Iptal edilen fisleri temizle
+            silinen = 0
+            if not self.is_cancelled:
+                self.progress_updated.emit(96, "Iptal edilen fisler kontrol ediliyor...")
+                try:
+                    silinen = self._cleanup_cancelled_fis(okunan_fis_nolar)
+                    if silinen > 0:
+                        logger.info(f"Sevk: {silinen} iptal edilmis fis silindi")
+                except Exception as e:
+                    logger.warning(f"Sevk fis temizleme hatasi: {e}")
+
+            self.progress_updated.emit(100, "Senkronizasyon tamamlandi")
+            mesaj = u"{} Sevk Fi\u015fi ({} Sat\u0131r) Kaydedildi.".format(len(evrak_set), eklenen)
+            if atlanan_okumali > 0:
+                mesaj += f" {atlanan_okumali} okumali fis atlandi."
+            if silinen > 0:
+                mesaj += f" {silinen} iptal edilmis fis silindi."
+            self.sync_finished.emit({
+                'eklenen': eklenen,
+                'atlanan': atlanan,
+                'evrak_sayisi': len(evrak_set),
+                'toplam': len(records),
+                'silinen': silinen,
+                'mesaj': mesaj
+            })
+
+        except Exception as e:
+            logger.exception("Sevk sync hatasi")
+            self.error_occurred.emit(str(e))
+
+    def _fetch_from_mikro(self, min_tarih: str) -> list:
+        """Mikro'dan son 7 gunun sevk fislerini cek."""
+        server = os.getenv('SQL_SERVER', '')
+        database = os.getenv('SQL_DATABASE', '')
+        username = os.getenv('SQL_USERNAME', '')
+        password = os.getenv('SQL_PASSWORD', '')
+
+        if not all([server, database, username]):
+            raise Exception("SQL baglanti bilgileri eksik!")
+
+        conn_str = (
+            f'DRIVER={{ODBC Driver 17 for SQL Server}};'
+            f'SERVER={server};'
+            f'DATABASE={database};'
+            f'UID={username};'
+            f'PWD={password}'
+        )
+
+        logger.info(f"Sevk: Mikro SQL Server'a baglaniliyor: {server}/{database} (tarih >= {min_tarih})")
+
+        with pyodbc.connect(conn_str, timeout=30) as conn:
+            cursor = conn.cursor()
+            cursor.execute(MIKRO_SEVK_SQL_QUERY, min_tarih)
+            columns = [col[0] for col in cursor.description]
+            rows = cursor.fetchall()
+
+        logger.info(f"Sevk: Mikro'dan {len(rows)} kayit alindi (tarih >= {min_tarih})")
+        return [dict(zip(columns, row)) for row in rows]
+
+    def _cleanup_cancelled_fis(self, okunan_fis_nolar: set = None) -> int:
+        """Mikro'da silinmis sevk fislerini Supabase'den temizle."""
+        if okunan_fis_nolar is None:
+            okunan_fis_nolar = set()
+
+        active_sira = self._fetch_active_sevk_evrakno_sira()
+
+        from datetime import timedelta
+        min_tarih = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        supabase_sira = self.supabase_client.get_sevk_all_evrakno_sira(min_tarih=min_tarih)
+
+        to_delete_candidates = supabase_sira - active_sira
+        to_delete = [s for s in to_delete_candidates if s not in okunan_fis_nolar]
+
+        korunan = len(to_delete_candidates) - len(to_delete)
+        if korunan > 0:
+            logger.info(f"Sevk: {korunan} iptal edilmis fis okumasi oldugu icin korunuyor")
+
+        if to_delete:
+            logger.info(f"Sevk: Iptal edilmis {len(to_delete)} fis silinecek: {to_delete}")
+            self.supabase_client.delete_sevk_by_evrakno_sira_list(to_delete)
+
+        return len(to_delete)
+
+    def _fetch_active_sevk_evrakno_sira(self) -> set:
+        """Mikro'daki son 7 gunun aktif sevk fisi evrakno_sira degerlerini al"""
+        server = os.getenv('SQL_SERVER', '')
+        database = os.getenv('SQL_DATABASE', '')
+        username = os.getenv('SQL_USERNAME', '')
+        password = os.getenv('SQL_PASSWORD', '')
+
+        conn_str = (
+            f'DRIVER={{ODBC Driver 17 for SQL Server}};'
+            f'SERVER={server};'
+            f'DATABASE={database};'
+            f'UID={username};'
+            f'PWD={password}'
+        )
+
+        from datetime import timedelta
+        min_tarih = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+        query = """
+            SELECT DISTINCT sth_evrakno_sira
+            FROM dbo.STOK_HAREKETLERI WITH (NOLOCK)
+            WHERE sth_evraktip = 2 AND sth_tarih >= ?
+        """
+
+        with pyodbc.connect(conn_str, timeout=30) as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, min_tarih)
+            rows = cursor.fetchall()
+
+        logger.info(f"Sevk: Mikro'da son 7 gunde {len(rows)} aktif sevk evrakno_sira bulundu")
         return set(row[0] for row in rows)
 
     def cancel(self):
@@ -4295,6 +4767,530 @@ class GirisFisiWidget(QWidget):
             cursor.removeSelectedText()
 
 
+# ================== SEVK FISI WIDGET ==================
+class SevkFisiWidget(QWidget):
+    u"""Depolar Aras\u0131 Sevk sekmesi - Mikro sevk fislerini Supabase'e senkronize etme"""
+
+    def __init__(self):
+        super().__init__()
+        self._data_loaded = False
+        self.sync_thread = None
+        self.last_sync_time = None
+
+        # Clients
+        self.supabase_client = None
+        self.dogtas_client = None
+        self._init_clients()
+
+        # Data
+        self.all_data = []
+        self.filtered_data = []
+        self.readings_map = {}
+
+        # UI
+        self.setup_ui()
+        self.setup_connections()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._data_loaded:
+            self._data_loaded = True
+            QTimer.singleShot(100, self.load_data)
+
+    def _init_clients(self):
+        try:
+            config_manager = CentralConfigManager()
+            settings = config_manager.get_settings()
+
+            supabase_url = (settings.get('Barkod_SUPABASE_URL') or
+                            settings.get('SUPABASE_URL', ''))
+            supabase_key = (settings.get('Barkod_SUPABASE_ANON_KEY') or
+                            settings.get('SUPABASE_ANON_KEY', ''))
+
+            if not supabase_url or not supabase_key:
+                config_manager.settings_cache = {}
+                settings = config_manager.get_settings(use_cache=False)
+                supabase_url = (settings.get('Barkod_SUPABASE_URL') or
+                                settings.get('SUPABASE_URL', ''))
+                supabase_key = (settings.get('Barkod_SUPABASE_ANON_KEY') or
+                                settings.get('SUPABASE_ANON_KEY', ''))
+
+            if supabase_url and supabase_key:
+                self.supabase_client = SupabaseClient(supabase_url, supabase_key)
+                logger.info("Sevk: Supabase client basariyla olusturuldu")
+            else:
+                logger.warning("Sevk: Supabase ayarlari eksik")
+
+            # Dogtas API config
+            dogtas_config = {
+                'base_url': settings.get('base_url', ''),
+                'userName': settings.get('userName', ''),
+                'password': settings.get('password', ''),
+                'clientId': settings.get('clientId', ''),
+                'clientSecret': settings.get('clientSecret', ''),
+                'applicationCode': settings.get('applicationCode', ''),
+                'CustomerNo': settings.get('CustomerNo', ''),
+            }
+
+            if dogtas_config['base_url']:
+                self.dogtas_client = DogtasApiClient(dogtas_config)
+            else:
+                logger.warning("Sevk: Dogtas API ayarlari eksik")
+
+        except Exception as e:
+            logger.error(f"Sevk client init hatasi: {e}")
+
+    # ==================== UI SETUP ====================
+    def setup_ui(self):
+        self.setStyleSheet("QWidget { background-color: #ffffff; }")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        # Header
+        layout.addWidget(self._create_header())
+
+        # Filter bar
+        layout.addWidget(self._create_filter_bar())
+
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setMaximumHeight(20)
+        layout.addWidget(self.progress_bar)
+
+        # Table
+        self.table = QTableWidget()
+        self.table.setStyleSheet(TABLE_STYLE)
+        self.table.setItemDelegate(NoFocusDelegate(self.table))
+        self.table.setSelectionBehavior(QTableWidget.SelectItems)
+        self.table.setSelectionMode(QTableWidget.ExtendedSelection)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setFocusPolicy(Qt.StrongFocus)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        self.copy_shortcut.activated.connect(self.handle_ctrl_c)
+        layout.addWidget(self.table, 3)
+
+        # Log area
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMaximumHeight(120)
+        self.log_text.setStyleSheet(LOG_STYLE)
+        layout.addWidget(self.log_text, 1)
+
+        # Status bar
+        self.status_label = QLabel("Hazir")
+        self.status_label.setStyleSheet("QLabel { color: #6b7280; font-size: 12px; padding: 4px; }")
+        layout.addWidget(self.status_label)
+
+    def _create_header(self) -> QWidget:
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.sync_button = QPushButton(u"Sevk Fi\u015fi Aktar")
+        self.sync_button.setStyleSheet(SYNC_BUTTON_STYLE)
+
+        self.refresh_button = QPushButton("Yenile")
+        self.refresh_button.setStyleSheet(BUTTON_STYLE)
+
+        self.all_button = QPushButton("Hepsi")
+        self.all_button.setStyleSheet(BUTTON_STYLE)
+
+        self.export_button = QPushButton("Excel")
+        self.export_button.setStyleSheet(BUTTON_STYLE)
+
+        self.last_sync_label = QLabel("Son Sync: -")
+        self.last_sync_label.setStyleSheet(INFO_LABEL_STYLE)
+
+        header_layout.addWidget(self.sync_button)
+        header_layout.addWidget(self.refresh_button)
+        header_layout.addWidget(self.all_button)
+        header_layout.addWidget(self.export_button)
+        header_layout.addStretch()
+        header_layout.addWidget(self.last_sync_label)
+
+        header_widget = QWidget()
+        header_widget.setLayout(header_layout)
+        return header_widget
+
+    def _create_filter_bar(self) -> QWidget:
+        filter_layout = QHBoxLayout()
+        filter_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.filter_evrak = QLineEdit()
+        self.filter_evrak.setPlaceholderText("Evrak No")
+        self.filter_evrak.setStyleSheet(FILTER_INPUT_STYLE)
+
+        self.filter_stok = QLineEdit()
+        self.filter_stok.setPlaceholderText("Stok Kodu")
+        self.filter_stok.setStyleSheet(FILTER_INPUT_STYLE)
+
+        self.filter_malzeme = QLineEdit()
+        self.filter_malzeme.setPlaceholderText("Malzeme")
+        self.filter_malzeme.setStyleSheet(FILTER_INPUT_STYLE)
+
+        self.filter_tarih = QLineEdit()
+        self.filter_tarih.setPlaceholderText("Tarihten itibaren (YYYY-MM-DD)")
+        self.filter_tarih.setStyleSheet(FILTER_INPUT_STYLE)
+
+        self.btn_barkod = QPushButton("Barkod Okunan")
+        self.btn_barkod.setCheckable(True)
+        self.btn_barkod.setStyleSheet(_toggle_btn_style('#22c55e', False))
+
+        self.btn_manuel = QPushButton("Manuel")
+        self.btn_manuel.setCheckable(True)
+        self.btn_manuel.setStyleSheet(_toggle_btn_style('#ef4444', False))
+
+        self.filter_clear_btn = QPushButton("Temizle")
+        self.filter_clear_btn.setStyleSheet(BUTTON_STYLE)
+
+        filter_layout.addWidget(self.filter_evrak)
+        filter_layout.addWidget(self.filter_stok)
+        filter_layout.addWidget(self.filter_malzeme)
+        filter_layout.addWidget(self.filter_tarih)
+        filter_layout.addWidget(self.btn_barkod)
+        filter_layout.addWidget(self.btn_manuel)
+        filter_layout.addWidget(self.filter_clear_btn)
+
+        filter_widget = QWidget()
+        filter_widget.setLayout(filter_layout)
+        return filter_widget
+
+    # ==================== CONNECTIONS ====================
+    def setup_connections(self):
+        self.sync_button.clicked.connect(self.start_sync)
+        self.refresh_button.clicked.connect(self.load_data)
+        self.all_button.clicked.connect(self.load_all_data)
+        self.export_button.clicked.connect(self.export_to_excel)
+        self.filter_clear_btn.clicked.connect(self._clear_filters)
+
+        self.filter_timer = QTimer()
+        self.filter_timer.setSingleShot(True)
+        self.filter_timer.timeout.connect(self.apply_filters)
+
+        for f in [self.filter_evrak, self.filter_stok,
+                   self.filter_malzeme, self.filter_tarih]:
+            f.textChanged.connect(self._schedule_filter)
+
+        self.btn_barkod.clicked.connect(self._on_toggle_btn)
+        self.btn_manuel.clicked.connect(self._on_toggle_btn)
+
+    def _schedule_filter(self):
+        self.filter_timer.start(300)
+
+    def _on_toggle_btn(self):
+        btn = self.sender()
+        color_map = {
+            self.btn_barkod: '#22c55e',
+            self.btn_manuel: '#ef4444',
+        }
+        color = color_map.get(btn, '#666')
+        btn.setStyleSheet(_toggle_btn_style(color, btn.isChecked()))
+        self._schedule_filter()
+
+    def _clear_filters(self):
+        for f in [self.filter_evrak, self.filter_stok,
+                   self.filter_malzeme, self.filter_tarih]:
+            f.clear()
+        for btn, color in [(self.btn_barkod, '#22c55e'),
+                           (self.btn_manuel, '#ef4444')]:
+            btn.setChecked(False)
+            btn.setStyleSheet(_toggle_btn_style(color, False))
+        self.apply_filters()
+
+    # ==================== SYNC ====================
+    def start_sync(self):
+        if not self.supabase_client:
+            self.log("HATA: Supabase baglantisi yapilandirilmamis!")
+            self.status_label.setText("Supabase ayarlari eksik")
+            return
+
+        if self.sync_thread and self.sync_thread.isRunning():
+            self.log("Sync zaten calisiyor...")
+            return
+
+        self.log("Senkronizasyon basladi...")
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self._set_buttons_enabled(False)
+
+        self.sync_thread = SevkSyncThread(self.supabase_client, self.dogtas_client)
+        self.sync_thread.progress_updated.connect(self._on_sync_progress)
+        self.sync_thread.sync_finished.connect(self._on_sync_finished)
+        self.sync_thread.error_occurred.connect(self._on_sync_error)
+        self.sync_thread.finished.connect(self._on_thread_finished)
+        self.sync_thread.start()
+
+    def _on_sync_progress(self, progress, message):
+        self.progress_bar.setValue(progress)
+        self.status_label.setText(message)
+        self.log(message)
+
+    def _on_sync_finished(self, result):
+        self.last_sync_time = datetime.now()
+        self.last_sync_label.setText(
+            f"Son Sync: {self.last_sync_time.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        mesaj = result['mesaj']
+        if result.get('atlanan', 0) > 0:
+            mesaj += f" ({result['atlanan']} atlandi)"
+        self.log(f"Tamamlandi: {mesaj}")
+        self.status_label.setText(mesaj)
+
+        QTimer.singleShot(500, self.load_data)
+
+    def _on_sync_error(self, error_message):
+        self.log(f"HATA: {error_message}")
+        self.status_label.setText(f"Sync hatasi: {error_message}")
+
+    def _on_thread_finished(self):
+        self._set_buttons_enabled(True)
+        QTimer.singleShot(1000, lambda: self.progress_bar.setVisible(False))
+
+    def _set_buttons_enabled(self, enabled: bool):
+        self.sync_button.setEnabled(enabled)
+        self.refresh_button.setEnabled(enabled)
+        self.all_button.setEnabled(enabled)
+        self.export_button.setEnabled(enabled)
+
+    # ==================== TABLE ====================
+    def load_data(self):
+        if not self.supabase_client:
+            self.status_label.setText("Supabase ayarlari eksik")
+            return
+        from datetime import timedelta
+        one_week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        self._start_load(min_tarih=one_week_ago)
+
+    def load_all_data(self):
+        if not self.supabase_client:
+            self.status_label.setText("Supabase ayarlari eksik")
+            return
+        self._start_load(min_tarih=None)
+
+    def _start_load(self, min_tarih=None):
+        label = "Son 1 hafta" if min_tarih else "Tumu"
+        self.status_label.setText(f"Sevk fisleri yukleniyor ({label})...")
+        self.refresh_button.setEnabled(False)
+        self.all_button.setEnabled(False)
+
+        self._load_thread = SevkLoadDataThread(self.supabase_client, min_tarih=min_tarih)
+        self._load_thread.data_loaded.connect(self._on_data_loaded)
+        self._load_thread.error_occurred.connect(self._on_load_error)
+        self._load_thread.start()
+
+    def _on_data_loaded(self, all_data, readings_map):
+        self.all_data = all_data
+        self.readings_map = readings_map
+        self.apply_filters()
+        self.status_label.setText(f"{len(self.all_data)} kayit yuklendi")
+        self.refresh_button.setEnabled(True)
+        self.all_button.setEnabled(True)
+
+    def _on_load_error(self, error_msg):
+        self.status_label.setText(f"Yukleme hatasi: {error_msg}")
+        self.log(f"HATA: Tablo yukleme hatasi: {error_msg}")
+        self.refresh_button.setEnabled(True)
+        self.all_button.setEnabled(True)
+
+    def _get_row_colors(self, row_data):
+        colors = set()
+        kalem_id = row_data.get('id')
+        paket_readings = self.readings_map.get(kalem_id, {})
+        for ps, reads in paket_readings.items():
+            for info in reads:
+                if info['type'] == 'scanner':
+                    colors.add('green')
+                elif info['type'] == 'manual':
+                    colors.add('red')
+        return colors
+
+    def apply_filters(self):
+        filtered = self.all_data[:]
+
+        evrak_text = self.filter_evrak.text().strip()
+        stok_text = self.filter_stok.text().strip()
+        malzeme_text = self.filter_malzeme.text().strip()
+        tarih_text = self.filter_tarih.text().strip()
+
+        if evrak_text:
+            filtered = [r for r in filtered
+                        if evrak_text in str(r.get('evrakno_sira', ''))]
+        if stok_text:
+            filtered = [r for r in filtered
+                        if _fuzzy_match(stok_text, str(r.get('stok_kod', '')))]
+        if malzeme_text:
+            filtered = [r for r in filtered
+                        if _fuzzy_match(malzeme_text, str(r.get('malzeme_adi', '')))]
+        if tarih_text:
+            filtered = [r for r in filtered
+                        if str(r.get('tarih', '') or '') >= tarih_text]
+
+        # Renk filtresi
+        want_colors = set()
+        if self.btn_barkod.isChecked():
+            want_colors.add('green')
+        if self.btn_manuel.isChecked():
+            want_colors.add('red')
+        if want_colors:
+            filtered = [r for r in filtered
+                        if self._get_row_colors(r) & want_colors]
+
+        self.filtered_data = filtered
+        self.populate_table()
+
+    def populate_table(self):
+        self.table.setUpdatesEnabled(False)
+        self.table.setSortingEnabled(False)
+
+        try:
+            self.table.setRowCount(len(self.filtered_data))
+            self.table.setColumnCount(len(SEVK_TABLE_COLUMNS))
+            self.table.setHorizontalHeaderLabels([c[1] for c in SEVK_TABLE_COLUMNS])
+
+            okuma_col_idx = next(
+                (j for j, (k, _) in enumerate(SEVK_TABLE_COLUMNS) if k == 'okuma_durumu'),
+                None
+            )
+
+            for i, row_data in enumerate(self.filtered_data):
+                for j, (key, _) in enumerate(SEVK_TABLE_COLUMNS):
+                    if key == 'okuma_durumu':
+                        continue
+                    value = row_data.get(key, '')
+                    if value is None:
+                        text = ''
+                    elif key == 'miktar':
+                        num = float(value)
+                        text = str(int(num)) if num == int(num) else str(num)
+                    elif key == 'tarih':
+                        text = str(value)[:10] if value else ''
+                    else:
+                        text = str(value)
+                    item = QTableWidgetItem(text)
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    font = QFont(FONT_FAMILY, FONT_SIZE)
+                    font.setBold(True)
+                    item.setFont(font)
+                    self.table.setItem(i, j, item)
+
+                # Okuma Durumu sutunu
+                if okuma_col_idx is not None:
+                    miktar = int(float(row_data.get('miktar', 0) or 0))
+                    paket = int(row_data.get('paket_sayisi', 1) or 1)
+                    kalem_id = row_data.get('id')
+                    paket_readings = self.readings_map.get(kalem_id, {})
+                    depo_no = str(row_data.get('cikis_depo', '') or '')
+                    widget = _build_okuma_durumu_widget(miktar, paket, paket_readings, depo_no)
+                    self.table.setCellWidget(i, okuma_col_idx, widget)
+
+            header = self.table.horizontalHeader()
+            header.setSectionResizeMode(QHeaderView.Interactive)
+            header.setStretchLastSection(False)
+            self.table.resizeColumnsToContents()
+
+            # Malzeme Adi sutunu stretch
+            malzeme_adi_idx = next(
+                (j for j, (k, _) in enumerate(SEVK_TABLE_COLUMNS) if k == 'malzeme_adi'),
+                len(SEVK_TABLE_COLUMNS) - 2
+            )
+            header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.Stretch)
+
+            if okuma_col_idx is not None:
+                if self.table.columnWidth(okuma_col_idx) < 200:
+                    self.table.setColumnWidth(okuma_col_idx, 200)
+
+            for i in range(self.table.rowCount()):
+                self.table.setRowHeight(i, ROW_HEIGHT)
+
+        finally:
+            self.table.setUpdatesEnabled(True)
+            self.table.setSortingEnabled(True)
+
+    # ==================== EXPORT ====================
+    def export_to_excel(self):
+        if not self.filtered_data:
+            self.status_label.setText("Disari aktarilacak veri yok")
+            return
+
+        try:
+            df = pd.DataFrame(self.filtered_data)
+            output_path = "D:/GoogleDrive/~ SevkFisi_Export.xlsx"
+            df.to_excel(output_path, index=False, engine='openpyxl')
+            self.status_label.setText(f"Excel export: {output_path}")
+            self.log(f"Veriler disari aktarildi: {output_path}")
+        except Exception as e:
+            self.status_label.setText(f"Export hatasi: {e}")
+            self.log(f"HATA: Export hatasi: {e}")
+
+    # ==================== KOPYALAMA ====================
+    def show_context_menu(self, pos):
+        menu = QMenu(self.table)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #a0a0a0;
+                padding: 4px 0px;
+            }
+            QMenu::item {
+                padding: 6px 24px;
+                color: #000000;
+                font-size: 14px;
+            }
+            QMenu::item:selected {
+                background-color: #3399ff;
+                color: #ffffff;
+            }
+        """)
+        hucre_action = QAction("Kopyala", self)
+        hucre_action.triggered.connect(lambda: self.copy_cell(pos))
+        menu.addAction(hucre_action)
+        menu.exec_(self.table.viewport().mapToGlobal(pos))
+
+    def copy_cell(self, pos):
+        item = self.table.itemAt(pos)
+        if item:
+            QApplication.clipboard().setText(item.text())
+
+    def handle_ctrl_c(self):
+        selected_items = self.table.selectedItems()
+        if not selected_items:
+            return
+        if len(selected_items) == 1:
+            QApplication.clipboard().setText(selected_items[0].text())
+        else:
+            rows = sorted({item.row() for item in selected_items})
+            cols = sorted({item.column() for item in selected_items})
+            text_data = ""
+            for r in rows:
+                row_items = []
+                for c in cols:
+                    item = self.table.item(r, c)
+                    if item and item.isSelected():
+                        row_items.append(item.text())
+                if row_items:
+                    text_data += "\t".join(row_items) + "\n"
+            if text_data:
+                QApplication.clipboard().setText(text_data.strip())
+
+    # ==================== LOG ====================
+    def log(self, message: str):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_text.append(f"[{timestamp}] {message}")
+        doc = self.log_text.document()
+        if doc.blockCount() > 100:
+            cursor = self.log_text.textCursor()
+            cursor.movePosition(cursor.MoveOperation.Start)
+            cursor.movePosition(cursor.MoveOperation.Down, cursor.MoveMode.KeepAnchor,
+                                doc.blockCount() - 100)
+            cursor.removeSelectedText()
+
+
 # ================== PLACEHOLDER WIDGET ==================
 class PlaceholderWidget(QWidget):
     """Henuz icerigi olmayan sekmeler icin placeholder"""
@@ -4333,7 +5329,8 @@ class BarkodApp(QWidget):
         self.tab_widget.addTab(self.satis_tab, u"Sat\u0131\u015f / Teslimat Fi\u015fi")
         self.nakliye_tab = NakliyeYuklemeWidget()
         self.tab_widget.addTab(self.nakliye_tab, u"Nakliye Y\u00fckleme")
-        self.tab_widget.addTab(PlaceholderWidget(u"Depolar Aras\u0131 Sevk"), u"Depolar Aras\u0131 Sevk")
+        self.sevk_tab = SevkFisiWidget()
+        self.tab_widget.addTab(self.sevk_tab, u"Depolar Aras\u0131 Sevk")
         self.tab_widget.addTab(PlaceholderWidget(u"Say\u0131m"), u"Say\u0131m")
         self.giris_tab = GirisFisiWidget()
         self.tab_widget.addTab(self.giris_tab, u"Di\u011fer Giri\u015fler")
