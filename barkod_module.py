@@ -173,7 +173,6 @@ CIKIS_TABLE_COLUMNS = [
     ('depo', 'Depo'),
     ('paket_sayisi', 'Paket'),
     ('malzeme_adi', u'Malzeme Ad\u0131'),
-    ('evrak_adi', u'Evrak Ad\u0131'),
     ('okuma_durumu', 'Okuma Durumu'),
 ]
 
@@ -3174,6 +3173,8 @@ class CikisFisiWidget(QWidget):
                     elif key == 'miktar':
                         num = float(value)
                         text = str(int(num)) if num == int(num) else str(num)
+                    elif key == 'tarih':
+                        text = str(value)[:10] if value else ''
                     else:
                         text = str(value)
                     item = QTableWidgetItem(text)
