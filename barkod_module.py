@@ -147,6 +147,7 @@ TABLE_COLUMNS = [
     ('paket_sayisi', 'Paket'),
     ('cari_adi', 'Cari Adı'),
     ('product_desc', 'Ürün Açıklama'),
+    ('plasiyer_kodu', 'Satıcı'),
     ('okuma_durumu', 'Okuma Durumu'),
 ]
 
@@ -212,7 +213,8 @@ MIKRO_SQL_QUERY = """
         cha.cha_kod AS cari_kodu,
         dbo.fn_CarininIsminiBul(cha.cha_cari_cins, cha.cha_kod) AS cari_adi,
         bar.bar_serino_veya_bagkodu AS bag_kodu,
-        sto.sto_isim AS malzeme_adi
+        sto.sto_isim AS malzeme_adi,
+        sth.sth_plasiyer_kodu
     FROM dbo.STOK_HAREKETLERI sth WITH (NOLOCK)
     LEFT JOIN dbo.CARI_HESAP_HAREKETLERI cha WITH (NOLOCK)
         ON sth.sth_evrakno_seri = cha.cha_evrakno_seri
@@ -589,7 +591,7 @@ class SupabaseClient:
         all_data = []
         page_size = 500
         offset = 0
-        select_cols = 'id,evrakno_seri,evrakno_sira,satirno,tarih,stok_kod,miktar,cikis_depo_no,paket_sayisi,cari_kodu,cari_adi,product_desc,malzeme_adi,evrak_adi,bag_kodu'
+        select_cols = 'id,evrakno_seri,evrakno_sira,satirno,tarih,stok_kod,miktar,cikis_depo_no,paket_sayisi,cari_kodu,cari_adi,product_desc,plasiyer_kodu,malzeme_adi,evrak_adi,bag_kodu'
         while offset < limit:
             current_limit = min(page_size, limit - offset)
             params = {
@@ -1539,6 +1541,7 @@ class SyncThread(QThread):
                     'paket_sayisi': paket_info['paketSayisi'] if paket_info else 1,
                     'bag_kodu': fatura.get('bag_kodu'),
                     'malzeme_adi': fatura.get('malzeme_adi'),
+                    'plasiyer_kodu': (fatura.get('sth_plasiyer_kodu') or '')[2:] if len(fatura.get('sth_plasiyer_kodu') or '') > 2 else fatura.get('sth_plasiyer_kodu') or '',
                 }
                 records.append(record)
 
@@ -3157,16 +3160,16 @@ class SatisTeslimatWidget(QWidget):
 
             # Header
             header = self.table.horizontalHeader()
-            header.setSectionResizeMode(QHeaderView.Interactive)
+            header.setMinimumSectionSize(100)
+            header.setSectionResizeMode(QHeaderView.ResizeToContents)
             header.setStretchLastSection(False)
-            self.table.resizeColumnsToContents()
 
-            # Urun Aciklama sutunu stretch
+            # Urun Aciklama sutunu ResizeToContents
             product_desc_idx = next(
                 (j for j, (k, _) in enumerate(TABLE_COLUMNS) if k == 'product_desc'),
                 len(TABLE_COLUMNS) - 2
             )
-            header.setSectionResizeMode(product_desc_idx, QHeaderView.Stretch)
+            header.setSectionResizeMode(product_desc_idx, QHeaderView.ResizeToContents)
 
             # Okuma Durumu sutunu minimum genislik
             if okuma_col_idx is not None:
@@ -3608,15 +3611,15 @@ class NakliyeYuklemeWidget(QWidget):
                     self.table.setCellWidget(i, okuma_col_idx, widget)
 
             header = self.table.horizontalHeader()
-            header.setSectionResizeMode(QHeaderView.Interactive)
+            header.setMinimumSectionSize(100)
+            header.setSectionResizeMode(QHeaderView.ResizeToContents)
             header.setStretchLastSection(False)
-            self.table.resizeColumnsToContents()
 
             malzeme_adi_idx = next(
                 (j for j, (k, _) in enumerate(NAKLIYE_TABLE_COLUMNS) if k == 'malzeme_adi'),
                 len(NAKLIYE_TABLE_COLUMNS) - 2
             )
-            header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.Stretch)
+            header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.ResizeToContents)
 
             if okuma_col_idx is not None:
                 if self.table.columnWidth(okuma_col_idx) < 200:
@@ -4142,16 +4145,16 @@ class CikisFisiWidget(QWidget):
                     self.table.setCellWidget(i, okuma_col_idx, widget)
 
             header = self.table.horizontalHeader()
-            header.setSectionResizeMode(QHeaderView.Interactive)
+            header.setMinimumSectionSize(100)
+            header.setSectionResizeMode(QHeaderView.ResizeToContents)
             header.setStretchLastSection(False)
-            self.table.resizeColumnsToContents()
 
-            # Malzeme Adi sutunu stretch
+            # Malzeme Adi sutunu ResizeToContents
             malzeme_adi_idx = next(
                 (j for j, (k, _) in enumerate(CIKIS_TABLE_COLUMNS) if k == 'malzeme_adi'),
                 len(CIKIS_TABLE_COLUMNS) - 2
             )
-            header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.Stretch)
+            header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.ResizeToContents)
 
             if okuma_col_idx is not None:
                 if self.table.columnWidth(okuma_col_idx) < 200:
@@ -4666,16 +4669,16 @@ class GirisFisiWidget(QWidget):
                     self.table.setCellWidget(i, okuma_col_idx, widget)
 
             header = self.table.horizontalHeader()
-            header.setSectionResizeMode(QHeaderView.Interactive)
+            header.setMinimumSectionSize(100)
+            header.setSectionResizeMode(QHeaderView.ResizeToContents)
             header.setStretchLastSection(False)
-            self.table.resizeColumnsToContents()
 
-            # Malzeme Adi sutunu stretch
+            # Malzeme Adi sutunu ResizeToContents
             malzeme_adi_idx = next(
                 (j for j, (k, _) in enumerate(GIRIS_TABLE_COLUMNS) if k == 'malzeme_adi'),
                 len(GIRIS_TABLE_COLUMNS) - 2
             )
-            header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.Stretch)
+            header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.ResizeToContents)
 
             if okuma_col_idx is not None:
                 if self.table.columnWidth(okuma_col_idx) < 200:
@@ -5190,16 +5193,16 @@ class SevkFisiWidget(QWidget):
                     self.table.setCellWidget(i, okuma_col_idx, widget)
 
             header = self.table.horizontalHeader()
-            header.setSectionResizeMode(QHeaderView.Interactive)
+            header.setMinimumSectionSize(100)
+            header.setSectionResizeMode(QHeaderView.ResizeToContents)
             header.setStretchLastSection(False)
-            self.table.resizeColumnsToContents()
 
-            # Malzeme Adi sutunu stretch
+            # Malzeme Adi sutunu ResizeToContents
             malzeme_adi_idx = next(
                 (j for j, (k, _) in enumerate(SEVK_TABLE_COLUMNS) if k == 'malzeme_adi'),
                 len(SEVK_TABLE_COLUMNS) - 2
             )
-            header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.Stretch)
+            header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.ResizeToContents)
 
             if okuma_col_idx is not None:
                 if self.table.columnWidth(okuma_col_idx) < 200:
