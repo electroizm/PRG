@@ -148,6 +148,7 @@ TABLE_COLUMNS = [
     ('cari_adi', 'Cari Adı'),
     ('product_desc', 'Ürün Açıklama'),
     ('plasiyer_kodu', 'Satıcı'),
+    ('satinalma_kalem_id', 'BagKodu'),
     ('okuma_durumu', 'Okuma Durumu'),
 ]
 
@@ -174,6 +175,7 @@ CIKIS_TABLE_COLUMNS = [
     ('depo', 'Depo'),
     ('paket_sayisi', 'Paket'),
     ('malzeme_adi', u'Malzeme Ad\u0131'),
+    ('satinalma_kalem_id', 'BagKodu'),
     ('okuma_durumu', 'Okuma Durumu'),
 ]
 
@@ -185,6 +187,7 @@ GIRIS_TABLE_COLUMNS = [
     ('depo', 'Depo'),
     ('paket_sayisi', 'Paket'),
     ('malzeme_adi', u'Malzeme Ad\u0131'),
+    ('satinalma_kalem_id', 'BagKodu'),
     ('okuma_durumu', 'Okuma Durumu'),
 ]
 
@@ -197,6 +200,7 @@ SEVK_TABLE_COLUMNS = [
     ('giris_depo', u'Giri\u015f Depo'),
     ('paket_sayisi', 'Paket'),
     ('malzeme_adi', u'Malzeme Ad\u0131'),
+    ('satinalma_kalem_id', 'BagKodu'),
     ('okuma_durumu', 'Okuma Durumu'),
 ]
 
@@ -591,7 +595,7 @@ class SupabaseClient:
         all_data = []
         page_size = 500
         offset = 0
-        select_cols = 'id,evrakno_seri,evrakno_sira,satirno,tarih,stok_kod,miktar,cikis_depo_no,paket_sayisi,cari_kodu,cari_adi,product_desc,plasiyer_kodu,malzeme_adi,evrak_adi,bag_kodu'
+        select_cols = 'id,evrakno_seri,evrakno_sira,satirno,tarih,stok_kod,miktar,cikis_depo_no,paket_sayisi,cari_kodu,cari_adi,product_desc,plasiyer_kodu,malzeme_adi,evrak_adi,satinalma_kalem_id'
         while offset < limit:
             current_limit = min(page_size, limit - offset)
             params = {
@@ -684,7 +688,7 @@ class SupabaseClient:
         all_data = []
         page_size = 500
         offset = 0
-        select_cols = 'id,evrakno_seri,evrakno_sira,tarih,stok_kod,miktar,depo,paket_sayisi,malzeme_adi,evrak_adi'
+        select_cols = 'id,evrakno_seri,evrakno_sira,tarih,stok_kod,miktar,depo,paket_sayisi,malzeme_adi,evrak_adi,satinalma_kalem_id'
         while offset < limit:
             current_limit = min(page_size, limit - offset)
             params = {
@@ -776,7 +780,7 @@ class SupabaseClient:
         all_data = []
         page_size = 500
         offset = 0
-        select_cols = 'id,evrakno_seri,evrakno_sira,tarih,stok_kod,miktar,depo,paket_sayisi,malzeme_adi,evrak_adi'
+        select_cols = 'id,evrakno_seri,evrakno_sira,tarih,stok_kod,miktar,depo,paket_sayisi,malzeme_adi,evrak_adi,satinalma_kalem_id'
         while offset < limit:
             current_limit = min(page_size, limit - offset)
             params = {
@@ -868,7 +872,7 @@ class SupabaseClient:
         all_data = []
         page_size = 500
         offset = 0
-        select_cols = 'id,evrakno_seri,evrakno_sira,tarih,stok_kod,miktar,cikis_depo,giris_depo,paket_sayisi,malzeme_adi,evrak_adi'
+        select_cols = 'id,evrakno_seri,evrakno_sira,tarih,stok_kod,miktar,cikis_depo,giris_depo,paket_sayisi,malzeme_adi,evrak_adi,satinalma_kalem_id'
         while offset < limit:
             current_limit = min(page_size, limit - offset)
             params = {
@@ -1539,7 +1543,7 @@ class SyncThread(QThread):
                     'product_code': product_code,
                     'product_desc': paket_info['productDesc'] if paket_info else None,
                     'paket_sayisi': paket_info['paketSayisi'] if paket_info else 1,
-                    'bag_kodu': fatura.get('bag_kodu'),
+                    'satinalma_kalem_id': fatura.get('bag_kodu'),
                     'malzeme_adi': fatura.get('malzeme_adi'),
                     'plasiyer_kodu': (fatura.get('sth_plasiyer_kodu') or '')[2:] if len(fatura.get('sth_plasiyer_kodu') or '') > 2 else fatura.get('sth_plasiyer_kodu') or '',
                 }
@@ -1922,6 +1926,7 @@ class CikisSyncThread(QThread):
                     'evrak_adi': fis.get('evrak_adi') or u'\u00c7\u0131k\u0131\u015f Fi\u015fi',
                     'paket_sayisi': paket_info['paketSayisi'] if paket_info else 1,
                     'malzeme_adi': fis.get('malzeme_adi'),
+                    'satinalma_kalem_id': fis.get('bag_kodu'),
                 }
                 records.append(record)
 
@@ -2208,6 +2213,7 @@ class GirisSyncThread(QThread):
                     'evrak_adi': fis.get('evrak_adi') or u'Giri\u015f Fi\u015fi',
                     'paket_sayisi': paket_info['paketSayisi'] if paket_info else 1,
                     'malzeme_adi': fis.get('malzeme_adi'),
+                    'satinalma_kalem_id': fis.get('bag_kodu'),
                 }
                 records.append(record)
 
@@ -2494,6 +2500,7 @@ class SevkSyncThread(QThread):
                     'evrak_adi': fis.get('evrak_adi') or u'Sevk Fi\u015fi',
                     'paket_sayisi': paket_info['paketSayisi'] if paket_info else 1,
                     'malzeme_adi': fis.get('malzeme_adi'),
+                    'satinalma_kalem_id': fis.get('bag_kodu'),
                 }
                 records.append(record)
 
