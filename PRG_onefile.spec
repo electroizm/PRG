@@ -38,6 +38,7 @@ prg_hidden_imports = [
     'PRG.stok_module',
     'PRG.virman_module',
     'PRG.barkod_module',
+    'PRG.hgo_module',
 ]
 
 # Harici bağımlılıklar
@@ -125,6 +126,7 @@ datas = [
     (os.path.join(prg_dir, 'stok_module.py'), 'PRG'),
     (os.path.join(prg_dir, 'virman_module.py'), 'PRG'),
     (os.path.join(prg_dir, 'barkod_module.py'), 'PRG'),
+    (os.path.join(prg_dir, 'hgo_module.py'), 'PRG'),
 ]
 
 # Certifi SSL sertifikalarını ekle

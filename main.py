@@ -85,6 +85,7 @@ from sanalpos_module import SanalPosApp
 from irsaliye_module import IrsaliyeWindow
 from sevkiyat_module import SevkiyatModule
 from fiyat_module import FiyatModule
+from hgo_module import HgoModule
 from ayar_module import AyarlarApp
 from barkod_module import BarkodApp
 
@@ -148,6 +149,7 @@ class ModernMainApp(QMainWindow):
             ModuleConfig("sanalpos", "Sanal Pos", ModuleType.SANALPOS, SanalPosApp),
             ModuleConfig("irsaliye", "İrsaliye", ModuleType.IRSALIYE, IrsaliyeWindow),
             ModuleConfig("fiyat", "Fiyat", ModuleType.FIYAT, FiyatModule),
+            ModuleConfig("hgo", "HGO", ModuleType.HGO, HgoModule),
             ModuleConfig("ayarlar", "Ayarlar", ModuleType.AYARLAR, AyarlarApp),
         ]
 

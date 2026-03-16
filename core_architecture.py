@@ -33,6 +33,7 @@ class ModuleType(Enum):
     SANALPOS = "sanalpos"
     IRSALIYE = "irsaliye"
     FIYAT = "fiyat"
+    HGO = "hgo"
     BARKOD = "barkod"
 
 
