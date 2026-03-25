@@ -22,8 +22,8 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QProgressBar, QLabel, QTableWidget, QTableWidgetItem,
                              QHeaderView, QTextEdit, QLineEdit, QTabWidget,
                              QApplication, QMenu, QAction, QShortcut,
-                             QStyledItemDelegate, QStyle)
-from PyQt5.QtGui import QFont, QKeySequence
+                             QStyledItemDelegate, QStyle, QListWidget, QListWidgetItem)
+from PyQt5.QtGui import QFont, QKeySequence, QColor, QBrush
 
 # Logger
 logger = logging.getLogger(__name__)
@@ -201,6 +201,32 @@ SEVK_TABLE_COLUMNS = [
     ('paket_sayisi', 'Paket'),
     ('malzeme_adi', u'Malzeme Ad\u0131'),
     ('satinalma_kalem_id', 'BagKodu'),
+    ('okuma_durumu', 'Okuma Durumu'),
+]
+
+QR_LOG_TABLE_COLUMNS = [
+    ('tarih', 'Tarih'),
+    ('yon', u'Y\u00f6n'),
+    ('kaynak', 'Kaynak'),
+    ('evrak_no', 'Evrak No'),
+    ('cari_adi', u'Cari Ad\u0131'),
+    ('paket_sira', 'Paket'),
+    ('qr_kod_kisa', 'QR Kod'),
+    ('kullanici', u'Kullan\u0131c\u0131'),
+]
+
+# Giris (+) ve Cikis (-) tablo siniflandirmasi
+_QR_GIRIS_KAYNAKLARI = {'Nakliye', u'Giri\u015f', 'Sevk', u'Say\u0131m'}
+_QR_CIKIS_KAYNAKLARI = {u'Sat\u0131\u015f', u'\u00c7\u0131k\u0131\u015f'}
+
+SAYIM_TABLE_COLUMNS = [
+    ('sayim_kodu', u'Say\u0131m Kodu'),
+    ('malzeme_kodu', 'Malzeme Kodu'),
+    ('malzeme_adi', u'Malzeme Ad\u0131'),
+    ('miktar', u'Say\u0131lan'),
+    ('beklenen', 'Beklenen'),
+    ('fark', 'Fark'),
+    ('paket_sayisi', 'Paket'),
     ('okuma_durumu', 'Okuma Durumu'),
 ]
 
@@ -400,6 +426,29 @@ TABLE_STYLE = """
     QTableWidget::item:focus {
         outline: none;
         border: none;
+        background-color: #b3d9ff;
+        color: #000000;
+    }
+    QHeaderView::section {
+        background-color: #f0f0f0;
+        color: #000000;
+        padding: 8px;
+        border: 1px solid #d0d0d0;
+        font-weight: bold;
+        font-size: 15px;
+    }
+"""
+
+SAYIM_TABLE_STYLE = """
+    QTableWidget {
+        font-size: 15px;
+        font-weight: bold;
+        background-color: #ffffff;
+        gridline-color: #d0d0d0;
+        border: 1px solid #d0d0d0;
+        color: #000000;
+    }
+    QTableWidget::item:selected {
         background-color: #b3d9ff;
         color: #000000;
     }
@@ -996,6 +1045,152 @@ class SupabaseClient:
             all_readings.extend(response.json())
         return all_readings
 
+    # ---------- Sayim ----------
+    def get_all_sayim_oturumlari(self, limit=2000, min_tarih=None, lokasyon=None) -> list:
+        """sayim_oturumlari tablosundan oturumlari al. lokasyon: DEPO/EXC/SUBE"""
+        url = f"{self.rest_url}/sayim_oturumlari"
+        all_data = []
+        page_size = 500
+        offset = 0
+        select_cols = 'id,lokasyon,lokasyon_kodu,kullanici,durum,sayim_kodu,baslangic,bitis,toplam_cesit,toplam_adet'
+        while offset < limit:
+            current_limit = min(page_size, limit - offset)
+            params = {
+                'select': select_cols,
+                'order': 'baslangic.desc',
+                'limit': str(current_limit),
+                'offset': str(offset)
+            }
+            if min_tarih:
+                params['baslangic'] = f'gte.{min_tarih}'
+            if lokasyon:
+                params['lokasyon'] = f'eq.{lokasyon}'
+            response = _request_with_retry(requests.get, url, headers=self.headers, params=params, timeout=60)
+            response.raise_for_status()
+            batch = response.json()
+            all_data.extend(batch)
+            if len(batch) < current_limit:
+                break
+            offset += current_limit
+        return all_data
+
+    def get_sayim_okumalari_by_oturum_ids(self, oturum_id_list: list) -> list:
+        """sayim_okumalari tablosundan okuma kayitlarini al"""
+        if not oturum_id_list:
+            return []
+        all_readings = []
+        batch_size = 50
+        for i in range(0, len(oturum_id_list), batch_size):
+            batch = oturum_id_list[i:i + batch_size]
+            values = ','.join(str(v) for v in batch)
+            url = f"{self.rest_url}/sayim_okumalari"
+            params = {
+                'select': 'oturum_id,stok_kod,malzeme_adi,paket_sira,paket_toplam,manuel,adet,kullanici,created_at',
+                'oturum_id': f'in.({values})',
+                'limit': '10000'
+            }
+            response = _request_with_retry(requests.get, url, headers=self.headers, params=params, timeout=60)
+            response.raise_for_status()
+            all_readings.extend(response.json())
+        return all_readings
+
+    def get_qr_log_by_stok_kod(self, stok_kod):
+        """Bir urunun tum okuma gecmisini 6 tablodan toplar"""
+        results = []
+        # Okuma tablolarinda stok_kod 10 haneli base kod (orn: '3200398839')
+        base_kod = _normalize_stok_kod(stok_kod)
+        stok_kod_18 = base_kod.zfill(18)  # nakliye icin 18 hane
+
+        # satis_faturasi'ndan kalem_id -> cari_adi eslesmesi
+        cari_map = {}  # kalem_id -> cari_adi
+        try:
+            url = f"{self.rest_url}/satis_faturasi"
+            params = {
+                'select': 'id,cari_adi',
+                'stok_kod': f'like.{base_kod}*',
+                'limit': '5000'
+            }
+            resp = _request_with_retry(requests.get, url, headers=self.headers, params=params, timeout=30)
+            resp.raise_for_status()
+            for row in resp.json():
+                cari_map[str(row.get('id', ''))] = row.get('cari_adi', '') or ''
+        except Exception as e:
+            logger.warning(f"QR log cari_adi hatasi: {e}")
+
+        # 5 standart tablo (stok_kod alani var)
+        # yon: + = giris, - = cikis
+        tables = [
+            ('satis_faturasi_okumalari', u'Sat\u0131\u015f', 'fatura_no', '-',
+             'stok_kod,fatura_no,kalem_id,paket_sira,qr_kod,kullanici,created_at'),
+            ('cikis_fisi_okumalari', u'\u00c7\u0131k\u0131\u015f', 'fis_no', '-',
+             'stok_kod,fis_no,kalem_id,paket_sira,qr_kod,kullanici,created_at'),
+            ('giris_fisi_okumalari', u'Giri\u015f', 'fis_no', '+',
+             'stok_kod,fis_no,kalem_id,paket_sira,qr_kod,kullanici,created_at'),
+            ('sevk_fisi_okumalari', 'Sevk', 'fis_no', '+',
+             'stok_kod,fis_no,kalem_id,paket_sira,qr_kod,kullanici,created_at'),
+            ('sayim_okumalari', u'Say\u0131m', 'oturum_id', '+',
+             'stok_kod,oturum_id,paket_sira,qr_kod,kullanici,created_at'),
+        ]
+
+        for table_name, kaynak, evrak_field, yon, select_cols in tables:
+            try:
+                url = f"{self.rest_url}/{table_name}"
+                params = {
+                    'select': select_cols,
+                    'stok_kod': f'like.{base_kod}*',
+                    'order': 'created_at.asc',
+                    'limit': '5000'
+                }
+                resp = _request_with_retry(requests.get, url, headers=self.headers, params=params, timeout=60)
+                resp.raise_for_status()
+                for row in resp.json():
+                    qr = str(row.get('qr_kod', '') or '')
+                    kalem_id = str(row.get('kalem_id', '') or '')
+                    results.append({
+                        'tarih': row.get('created_at', ''),
+                        'yon': yon,
+                        'kaynak': kaynak,
+                        'evrak_no': str(row.get(evrak_field, '') or ''),
+                        'cari_adi': cari_map.get(kalem_id, ''),
+                        'paket_sira': row.get('paket_sira', ''),
+                        'qr_kod': qr,
+                        'qr_kod_kisa': (qr[:20] + '...' + qr[-20:]) if len(qr) > 45 else qr,
+                        'kullanici': row.get('kullanici', ''),
+                    })
+            except Exception as e:
+                logger.warning(f"QR log {table_name} hatasi: {e}")
+
+        # Nakliye (farkli alan adlari, giris +)
+        try:
+            url = f"{self.rest_url}/nakliye_fisleri_okumalari"
+            params = {
+                'select': 'malzeme_no_qr,nakliye_kalem_id,paket_sira,qr_kod,okuyan_kullanici,okuma_zamani',
+                'malzeme_no_qr': f'eq.{stok_kod_18}',
+                'order': 'okuma_zamani.asc',
+                'limit': '5000'
+            }
+            resp = _request_with_retry(requests.get, url, headers=self.headers, params=params, timeout=60)
+            resp.raise_for_status()
+            for row in resp.json():
+                qr = str(row.get('qr_kod', '') or '')
+                results.append({
+                    'tarih': row.get('okuma_zamani', ''),
+                    'yon': '+',
+                    'kaynak': 'Nakliye',
+                    'evrak_no': str(row.get('nakliye_kalem_id', '') or ''),
+                    'cari_adi': '',
+                    'paket_sira': row.get('paket_sira', ''),
+                    'qr_kod': qr,
+                    'qr_kod_kisa': (qr[:20] + '...' + qr[-20:]) if len(qr) > 45 else qr,
+                    'kullanici': row.get('okuyan_kullanici', ''),
+                })
+        except Exception as e:
+            logger.warning(f"QR log nakliye hatasi: {e}")
+
+        # Tarihe gore sirala (kronolojik)
+        results.sort(key=lambda r: r.get('tarih', '') or '')
+        return results
+
 
 # ================== DOGTAS API CLIENT ==================
 class DogtasApiClient:
@@ -1396,6 +1591,219 @@ class SevkLoadDataThread(QThread):
                 logger.info(f"Sevk: {len(readings)} okuma kaydi yuklendi")
             except Exception as e:
                 logger.warning(f"Sevk okuma verileri yuklenemedi: {e}")
+
+            self.data_loaded.emit(all_data, readings_map)
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+
+# ================== SAYIM LOAD DATA THREAD ==================
+class SayimLoadDataThread(QThread):
+    """Supabase'den sayim oturumlari + okuma verilerini arka planda yukler.
+    Okumalari (oturum_id, stok_kod) bazinda gruplayarak sanal satirlar olusturur."""
+
+    data_loaded = pyqtSignal(list, dict)  # (all_data, readings_map)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, supabase_client: SupabaseClient, min_tarih=None, lokasyon=None):
+        super().__init__()
+        self.supabase_client = supabase_client
+        self.min_tarih = min_tarih
+        self.lokasyon = lokasyon
+
+    def run(self):
+        try:
+            oturumlar = self.supabase_client.get_all_sayim_oturumlari(
+                limit=5000, min_tarih=self.min_tarih, lokasyon=self.lokasyon
+            )
+            oturum_map = {o['id']: o for o in oturumlar}
+
+            all_data = []
+            readings_map = {}
+
+            try:
+                oturum_ids = list(oturum_map.keys())
+                okumalar = self.supabase_client.get_sayim_okumalari_by_oturum_ids(oturum_ids)
+
+                from datetime import datetime, timedelta, timezone
+
+                # Okumalari (oturum_id, stok_kod) bazinda grupla
+                grouped = {}  # key: (oturum_id, stok_kod) -> list of readings
+                for r in okumalar:
+                    oid = r.get('oturum_id')
+                    sk = r.get('stok_kod', '')
+                    if not oid or not sk:
+                        continue
+                    key = (oid, sk)
+                    if key not in grouped:
+                        grouped[key] = []
+                    grouped[key].append(r)
+
+                for (oid, sk), readings in grouped.items():
+                    oturum = oturum_map.get(oid, {})
+                    composite_key = f"{oid}::{sk}"
+
+                    # paket_toplam ve malzeme_adi belirle
+                    paket_toplam = 1
+                    malzeme_adi = sk
+                    for r in readings:
+                        pt = int(r.get('paket_toplam', 0) or 0)
+                        if pt > paket_toplam:
+                            paket_toplam = pt
+                        if r.get('malzeme_adi'):
+                            malzeme_adi = r['malzeme_adi']
+
+                    # readings_map olustur
+                    paket_readings = {}
+                    manuel_infos = []  # paket_sira olmayan manuel okumalar
+                    for r in readings:
+                        ps = int(r.get('paket_sira', 0) or 0)
+                        is_manuel = r.get('manuel', False)
+                        read_type = 'manual' if is_manuel else 'scanner'
+                        raw_time = r.get('created_at', '')
+                        tr_time = ''
+                        if raw_time:
+                            try:
+                                dt = datetime.fromisoformat(raw_time.replace('Z', '+00:00'))
+                                dt_tr = dt.astimezone(timezone(timedelta(hours=3)))
+                                tr_time = dt_tr.strftime('%d.%m.%Y %H:%M')
+                            except Exception:
+                                tr_time = str(raw_time)[:16]
+                        info = {
+                            'type': read_type,
+                            'user': r.get('kullanici', '') or '',
+                            'time': tr_time,
+                        }
+                        if ps > 0:
+                            if ps not in paket_readings:
+                                paket_readings[ps] = []
+                            paket_readings[ps].append(info)
+                        elif is_manuel:
+                            # paket_sira olmayan manuel okuma: adet kadar birim
+                            adet = int(r.get('adet', 1) or 1)
+                            for _ in range(adet):
+                                manuel_infos.append(info)
+
+                    # Manuel okumalari paket_readings'e ekle
+                    # Her manuel birim icin tum paket pozisyonlarini doldur
+                    if manuel_infos:
+                        if paket_toplam < 1:
+                            paket_toplam = 1
+                        qr_miktar = max((len(v) for v in paket_readings.values()), default=0)
+                        for mi in manuel_infos:
+                            for ps in range(1, paket_toplam + 1):
+                                if ps not in paket_readings:
+                                    paket_readings[ps] = []
+                                # QR miktar ile hizala (bos pozisyonlari None ile doldur)
+                                while len(paket_readings[ps]) < qr_miktar:
+                                    paket_readings[ps].append(None)
+                                paket_readings[ps].append(mi)
+
+                    # miktar = en cok okunan paket_sira'nin sayisi
+                    miktar = max((len(v) for v in paket_readings.values()), default=0)
+
+                    # Tarih formatla
+                    raw_tarih = oturum.get('baslangic', '')
+                    tarih_str = ''
+                    if raw_tarih:
+                        try:
+                            dt = datetime.fromisoformat(raw_tarih.replace('Z', '+00:00'))
+                            dt_tr = dt.astimezone(timezone(timedelta(hours=3)))
+                            tarih_str = dt_tr.strftime('%d.%m.%Y %H:%M')
+                        except Exception:
+                            tarih_str = str(raw_tarih)[:16]
+
+                    row = {
+                        'composite_key': composite_key,
+                        'sayim_kodu': oturum.get('sayim_kodu', ''),
+                        'lokasyon': oturum.get('lokasyon', ''),
+                        'lokasyon_kodu': str(oturum.get('lokasyon_kodu', '') or ''),
+                        'durum': oturum.get('durum', ''),
+                        'tarih': tarih_str,
+                        'stok_kod': sk,
+                        'malzeme_adi': malzeme_adi,
+                        'miktar': miktar,
+                        'paket_sayisi': paket_toplam,
+                        'kullanici': oturum.get('kullanici', ''),
+                    }
+                    all_data.append(row)
+                    readings_map[composite_key] = paket_readings
+
+                logger.info(f"Sayim ({self.lokasyon}): {len(okumalar)} okuma, {len(all_data)} urun satiri yuklendi")
+            except Exception as e:
+                logger.warning(f"Sayim okuma verileri yuklenemedi: {e}")
+
+            # PRGsheet Stok verisinden beklenen adetleri cek
+            beklenen_map = {}  # stok_kod -> {'malzeme_adi': str, 'beklenen': float}
+            try:
+                from io import BytesIO
+                config_manager = CentralConfigManager()
+                sid = config_manager.MASTER_SPREADSHEET_ID
+                gsheets_url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=xlsx"
+                resp = requests.get(gsheets_url, timeout=30)
+                resp.raise_for_status()
+                stok_df = pd.read_excel(BytesIO(resp.content), sheet_name="Stok")
+
+                kod_col = stok_df.columns[0]
+                lokasyon_col = self.lokasyon  # DEPO, SUBE, EXC
+                malzeme_adi_col = u'Malzeme Ad\u0131'
+                malzeme_kodu_col = 'Malzeme Kodu'
+
+                if lokasyon_col in stok_df.columns:
+                    for _, srow in stok_df.iterrows():
+                        kod = str(srow[kod_col]).strip() if pd.notna(srow[kod_col]) else ''
+                        if not kod:
+                            continue
+                        bek = float(srow[lokasyon_col]) if pd.notna(srow[lokasyon_col]) else 0
+                        mal_adi = str(srow[malzeme_adi_col]) if malzeme_adi_col in stok_df.columns and pd.notna(srow.get(malzeme_adi_col)) else kod
+                        mal_kodu = str(srow[malzeme_kodu_col]).strip() if malzeme_kodu_col in stok_df.columns and pd.notna(srow.get(malzeme_kodu_col)) else ''
+                        beklenen_map[kod] = {'malzeme_adi': mal_adi, 'beklenen': bek, 'malzeme_kodu': mal_kodu}
+                    logger.info(f"PRGsheet Stok: {len(beklenen_map)} urun beklenen verisi yuklendi ({self.lokasyon})")
+                else:
+                    logger.warning(f"PRGsheet Stok: '{lokasyon_col}' kolonu bulunamadi")
+            except Exception as e:
+                logger.warning(f"PRGsheet stok verisi yuklenemedi: {e}")
+
+            # Toplam sayilan hesapla (stok_kod bazinda tum oturumlar dahil)
+            sayilan_toplam = {}
+            for rd in all_data:
+                sk = rd.get('stok_kod', '')
+                m = int(float(rd.get('miktar', 0) or 0))
+                sayilan_toplam[sk] = sayilan_toplam.get(sk, 0) + m
+
+            # Beklenen, fark ve malzeme_kodu bilgisini her satira ekle
+            for rd in all_data:
+                sk = rd.get('stok_kod', '')
+                bek_info = beklenen_map.get(sk, {})
+                beklenen = bek_info.get('beklenen', 0)
+                toplam = sayilan_toplam.get(sk, 0)
+                rd['beklenen'] = beklenen
+                rd['fark'] = toplam - beklenen
+                rd['malzeme_kodu'] = bek_info.get('malzeme_kodu', '') or sk
+
+            # Sayilmamis urunleri ekle (beklenen > 0 ama hic okuma yok)
+            lok_kodu_map = {'DEPO': '100', 'SUBE': '200', 'EXC': '300'}
+            counted_kodlar = set(sayilan_toplam.keys())
+            for sk, info in beklenen_map.items():
+                if sk in counted_kodlar or info['beklenen'] <= 0:
+                    continue
+                row = {
+                    'composite_key': f"beklenen::{sk}",
+                    'sayim_kodu': '',
+                    'lokasyon': self.lokasyon or '',
+                    'lokasyon_kodu': lok_kodu_map.get(self.lokasyon, ''),
+                    'durum': '',
+                    'tarih': '',
+                    'stok_kod': sk,
+                    'malzeme_kodu': info.get('malzeme_kodu', '') or sk,
+                    'malzeme_adi': info['malzeme_adi'],
+                    'miktar': 0,
+                    'paket_sayisi': 0,
+                    'kullanici': '',
+                    'beklenen': info['beklenen'],
+                    'fark': -info['beklenen'],
+                }
+                all_data.append(row)
 
             self.data_loaded.emit(all_data, readings_map)
         except Exception as e:
@@ -5301,7 +5709,1071 @@ class SevkFisiWidget(QWidget):
             cursor.removeSelectedText()
 
 
+# ================== SAYIM LOKASYON WIDGET ==================
+class SayimLokasyonWidget(QWidget):
+    u"""Say\u0131m lokasyon sekmesi - Belirli bir lokasyonun sayim verilerini gosterir"""
+
+    def __init__(self, lokasyon, lokasyon_kodu):
+        super().__init__()
+        self.lokasyon = lokasyon          # DEPO / EXC / SUBE
+        self.lokasyon_kodu = lokasyon_kodu  # 100 / 300 / 200
+        self._data_loaded = False
+
+        # Clients
+        self.supabase_client = None
+        self._init_clients()
+
+        # Data
+        self.all_data = []
+        self.filtered_data = []
+        self.readings_map = {}
+
+        # UI
+        self.setup_ui()
+        self.setup_connections()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._data_loaded:
+            self._data_loaded = True
+            QTimer.singleShot(100, self.load_data)
+
+    def _init_clients(self):
+        try:
+            config_manager = CentralConfigManager()
+            settings = config_manager.get_settings()
+
+            supabase_url = (settings.get('Barkod_SUPABASE_URL') or
+                            settings.get('SUPABASE_URL', ''))
+            supabase_key = (settings.get('Barkod_SUPABASE_ANON_KEY') or
+                            settings.get('SUPABASE_ANON_KEY', ''))
+
+            if not supabase_url or not supabase_key:
+                config_manager.settings_cache = {}
+                settings = config_manager.get_settings(use_cache=False)
+                supabase_url = (settings.get('Barkod_SUPABASE_URL') or
+                                settings.get('SUPABASE_URL', ''))
+                supabase_key = (settings.get('Barkod_SUPABASE_ANON_KEY') or
+                                settings.get('SUPABASE_ANON_KEY', ''))
+
+            if supabase_url and supabase_key:
+                self.supabase_client = SupabaseClient(supabase_url, supabase_key)
+            else:
+                logger.warning(f"Sayim {self.lokasyon}: Supabase ayarlari eksik")
+
+        except Exception as e:
+            logger.error(f"Sayim {self.lokasyon} client init hatasi: {e}")
+
+    # ==================== UI SETUP ====================
+    def setup_ui(self):
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setObjectName("sayimLokasyonWidget")
+        self.setStyleSheet("#sayimLokasyonWidget { background-color: #ffffff; }")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        layout.addWidget(self._create_header())
+        layout.addWidget(self._create_filter_bar())
+
+        # Table (SAYIM_TABLE_STYLE: ::item yok, setBackground icin)
+        self.table = QTableWidget()
+        self.table.setStyleSheet(SAYIM_TABLE_STYLE)
+        self.table.setItemDelegate(NoFocusDelegate(self.table))
+        self.table.setSelectionBehavior(QTableWidget.SelectItems)
+        self.table.setSelectionMode(QTableWidget.ExtendedSelection)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setFocusPolicy(Qt.StrongFocus)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        self.copy_shortcut.activated.connect(self.handle_ctrl_c)
+        layout.addWidget(self.table, 1)
+
+        # Status bar
+        self.status_label = QLabel("Hazir")
+        self.status_label.setStyleSheet("QLabel { color: #6b7280; font-size: 12px; padding: 4px; }")
+        layout.addWidget(self.status_label)
+
+    def _create_header(self) -> QWidget:
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.refresh_button = QPushButton("Yenile")
+        self.refresh_button.setStyleSheet(SYNC_BUTTON_STYLE)
+
+        self.all_button = QPushButton("Hepsi")
+        self.all_button.setStyleSheet(BUTTON_STYLE)
+
+        self.export_button = QPushButton("Excel")
+        self.export_button.setStyleSheet(BUTTON_STYLE)
+
+        self.csv_button = QPushButton(".csv")
+        self.csv_button.setStyleSheet(BUTTON_STYLE)
+
+        self.last_load_label = QLabel(u"Son Y\u00fckleme: -")
+        self.last_load_label.setStyleSheet(INFO_LABEL_STYLE)
+
+        header_layout.addWidget(self.refresh_button)
+        header_layout.addWidget(self.all_button)
+        header_layout.addWidget(self.export_button)
+        header_layout.addWidget(self.csv_button)
+        header_layout.addStretch()
+        header_layout.addWidget(self.last_load_label)
+
+        header_widget = QWidget()
+        header_widget.setLayout(header_layout)
+        return header_widget
+
+    def _create_filter_bar(self) -> QWidget:
+        filter_layout = QHBoxLayout()
+        filter_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.filter_stok = QLineEdit()
+        self.filter_stok.setPlaceholderText("Malzeme Kodu")
+        self.filter_stok.setStyleSheet(FILTER_INPUT_STYLE)
+
+        self.filter_malzeme = QLineEdit()
+        self.filter_malzeme.setPlaceholderText("Malzeme")
+        self.filter_malzeme.setStyleSheet(FILTER_INPUT_STYLE)
+
+        # Fark filtre butonlari (radio mantigi: sadece biri secili olabilir)
+        self.btn_tumu = QPushButton(u"T\u00fcm\u00fc")
+        self.btn_tumu.setCheckable(True)
+        self.btn_tumu.setStyleSheet(_toggle_btn_style('#3b82f6', False))
+
+        self.btn_esit = QPushButton(u"E\u015fit")
+        self.btn_esit.setCheckable(True)
+        self.btn_esit.setStyleSheet(_toggle_btn_style('#22c55e', False))
+
+        self.btn_eksik = QPushButton("Eksik")
+        self.btn_eksik.setCheckable(True)
+        self.btn_eksik.setStyleSheet(_toggle_btn_style('#ef4444', False))
+
+        self.btn_fazla = QPushButton("Fazla")
+        self.btn_fazla.setCheckable(True)
+        self.btn_fazla.setStyleSheet(_toggle_btn_style('#ca8a04', False))
+
+        self._fark_buttons = [self.btn_tumu, self.btn_esit, self.btn_eksik, self.btn_fazla]
+        self._fark_btn_colors = {
+            self.btn_tumu: '#3b82f6',
+            self.btn_esit: '#22c55e',
+            self.btn_eksik: '#ef4444',
+            self.btn_fazla: '#ca8a04',
+        }
+
+        self.btn_barkod = QPushButton("Barkod Okunan")
+        self.btn_barkod.setCheckable(True)
+        self.btn_barkod.setStyleSheet(_toggle_btn_style('#22c55e', False))
+
+        self.btn_manuel = QPushButton("Manuel")
+        self.btn_manuel.setCheckable(True)
+        self.btn_manuel.setStyleSheet(_toggle_btn_style('#f97316', False))
+
+        self.filter_clear_btn = QPushButton("Temizle")
+        self.filter_clear_btn.setStyleSheet(BUTTON_STYLE)
+
+        filter_layout.addWidget(self.btn_tumu)
+        filter_layout.addWidget(self.btn_esit)
+        filter_layout.addWidget(self.btn_eksik)
+        filter_layout.addWidget(self.btn_fazla)
+        filter_layout.addWidget(self.filter_stok)
+        filter_layout.addWidget(self.filter_malzeme)
+        filter_layout.addWidget(self.btn_barkod)
+        filter_layout.addWidget(self.btn_manuel)
+        filter_layout.addWidget(self.filter_clear_btn)
+
+        filter_widget = QWidget()
+        filter_widget.setLayout(filter_layout)
+        return filter_widget
+
+    # ==================== CONNECTIONS ====================
+    def setup_connections(self):
+        self.refresh_button.clicked.connect(self.load_data)
+        self.all_button.clicked.connect(self.load_all_data)
+        self.export_button.clicked.connect(self.export_to_excel)
+        self.csv_button.clicked.connect(self.export_to_csv)
+        self.filter_clear_btn.clicked.connect(self._clear_filters)
+
+        self.filter_timer = QTimer()
+        self.filter_timer.setSingleShot(True)
+        self.filter_timer.timeout.connect(self.apply_filters)
+
+        for f in [self.filter_stok, self.filter_malzeme]:
+            f.textChanged.connect(self._schedule_filter)
+
+        for btn in self._fark_buttons:
+            btn.clicked.connect(self._on_fark_btn)
+        self.btn_barkod.clicked.connect(self._on_toggle_btn)
+        self.btn_manuel.clicked.connect(self._on_toggle_btn)
+
+    def _schedule_filter(self):
+        self.filter_timer.start(300)
+
+    def _on_fark_btn(self):
+        """Fark butonlari radio mantigi: sadece biri secili olabilir"""
+        clicked = self.sender()
+        for btn in self._fark_buttons:
+            if btn is clicked:
+                btn.setChecked(True)
+                btn.setStyleSheet(_toggle_btn_style(self._fark_btn_colors[btn], True))
+            else:
+                btn.setChecked(False)
+                btn.setStyleSheet(_toggle_btn_style(self._fark_btn_colors[btn], False))
+        self._schedule_filter()
+
+    def _on_toggle_btn(self):
+        btn = self.sender()
+        color_map = {
+            self.btn_barkod: '#22c55e',
+            self.btn_manuel: '#f97316',
+        }
+        color = color_map.get(btn, '#666')
+        btn.setStyleSheet(_toggle_btn_style(color, btn.isChecked()))
+        self._schedule_filter()
+
+    def _clear_filters(self):
+        for f in [self.filter_stok, self.filter_malzeme]:
+            f.clear()
+        for btn in self._fark_buttons:
+            btn.setChecked(False)
+            btn.setStyleSheet(_toggle_btn_style(self._fark_btn_colors[btn], False))
+        for btn, color in [(self.btn_barkod, '#22c55e'),
+                           (self.btn_manuel, '#f97316')]:
+            btn.setChecked(False)
+            btn.setStyleSheet(_toggle_btn_style(color, False))
+        self.apply_filters()
+
+    # ==================== TABLE ====================
+    def load_data(self):
+        if not self.supabase_client:
+            self.status_label.setText("Supabase ayarlari eksik")
+            return
+        from datetime import timedelta
+        one_week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        self._start_load(min_tarih=one_week_ago)
+
+    def load_all_data(self):
+        if not self.supabase_client:
+            self.status_label.setText("Supabase ayarlari eksik")
+            return
+        self._start_load(min_tarih=None)
+
+    def _start_load(self, min_tarih=None):
+        label = "Son 1 hafta" if min_tarih else "Tumu"
+        self.status_label.setText(f"{self.lokasyon} sayim verileri yukleniyor ({label})...")
+        self.refresh_button.setEnabled(False)
+        self.all_button.setEnabled(False)
+
+        self._load_thread = SayimLoadDataThread(
+            self.supabase_client, min_tarih=min_tarih, lokasyon=self.lokasyon
+        )
+        self._load_thread.data_loaded.connect(self._on_data_loaded)
+        self._load_thread.error_occurred.connect(self._on_load_error)
+        self._load_thread.start()
+
+    def _on_data_loaded(self, all_data, readings_map):
+        self.all_data = all_data
+        self.readings_map = readings_map
+        self.last_load_label.setText(
+            f"Son Y\u00fckleme: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        self.apply_filters()
+        self.status_label.setText(f"{self.lokasyon}: {len(self.all_data)} urun satiri yuklendi")
+        self.refresh_button.setEnabled(True)
+        self.all_button.setEnabled(True)
+
+    def _on_load_error(self, error_msg):
+        self.status_label.setText(f"Yukleme hatasi: {error_msg}")
+        self.refresh_button.setEnabled(True)
+        self.all_button.setEnabled(True)
+
+    def _get_row_colors(self, row_data):
+        colors = set()
+        composite_key = row_data.get('composite_key')
+        depo_no = str(row_data.get('lokasyon_kodu', '') or '')
+        paket_readings = self.readings_map.get(composite_key, {})
+        for ps, reads in paket_readings.items():
+            for info in reads:
+                if info is None:
+                    continue
+                if info['type'] == 'scanner':
+                    colors.add('green')
+                elif info['type'] == 'manual':
+                    if depo_no == '100':
+                        colors.add('red')
+                    else:
+                        colors.add('orange')
+        return colors
+
+    def apply_filters(self):
+        filtered = self.all_data[:]
+
+        stok_text = self.filter_stok.text().strip()
+        malzeme_text = self.filter_malzeme.text().strip()
+
+        if stok_text:
+            filtered = [r for r in filtered
+                        if _fuzzy_match(stok_text, str(r.get('malzeme_kodu', '')))
+                        or _fuzzy_match(stok_text, str(r.get('stok_kod', '')))]
+        if malzeme_text:
+            filtered = [r for r in filtered
+                        if _fuzzy_match(malzeme_text, str(r.get('malzeme_adi', '')))]
+
+        # Fark filtresi (radio: Tumu / Esit / Eksik / Fazla)
+        if self.btn_tumu.isChecked():
+            # Sadece sayilan satirlari goster (sayim_kodu dolu)
+            filtered = [r for r in filtered if r.get('sayim_kodu')]
+        elif self.btn_esit.isChecked():
+            filtered = [r for r in filtered if float(r.get('fark', 0) or 0) == 0 and r.get('sayim_kodu')]
+        elif self.btn_eksik.isChecked():
+            filtered = [r for r in filtered if float(r.get('fark', 0) or 0) < 0]
+        elif self.btn_fazla.isChecked():
+            filtered = [r for r in filtered if float(r.get('fark', 0) or 0) > 0]
+
+        # Okuma renk filtresi
+        want_colors = set()
+        if self.btn_barkod.isChecked():
+            want_colors.add('green')
+        if self.btn_manuel.isChecked():
+            want_colors.add('red')
+            want_colors.add('orange')
+        if want_colors:
+            filtered = [r for r in filtered
+                        if self._get_row_colors(r) & want_colors]
+
+        # Okunan satirlari once goster (sayim_kodu bos olmayanlar)
+        filtered.sort(key=lambda r: (0 if r.get('sayim_kodu') else 1))
+
+        self.filtered_data = filtered
+        self.populate_table()
+
+    def populate_table(self):
+        self.table.setUpdatesEnabled(False)
+        self.table.setSortingEnabled(False)
+
+        try:
+            self.table.setRowCount(len(self.filtered_data))
+            self.table.setColumnCount(len(SAYIM_TABLE_COLUMNS))
+            self.table.setHorizontalHeaderLabels([c[1] for c in SAYIM_TABLE_COLUMNS])
+
+            okuma_col_idx = next(
+                (j for j, (k, _) in enumerate(SAYIM_TABLE_COLUMNS) if k == 'okuma_durumu'),
+                None
+            )
+
+            for i, row_data in enumerate(self.filtered_data):
+                # Satir arka plan rengi belirle (fark bazli)
+                fark_val = float(row_data.get('fark', 0) or 0)
+                beklenen_val = float(row_data.get('beklenen', 0) or 0)
+                if beklenen_val != 0 or fark_val != 0:
+                    if fark_val < 0:
+                        row_bg = QBrush(QColor('#fef2f2'))   # Acik kirmizi: eksik
+                    elif fark_val > 0:
+                        row_bg = QBrush(QColor('#fefce8'))   # Acik sari: fazla
+                    else:
+                        row_bg = QBrush(QColor('#f0fdf4'))   # Acik yesil: esit
+                else:
+                    row_bg = None  # Beklenen bilgisi yok
+
+                for j, (key, _) in enumerate(SAYIM_TABLE_COLUMNS):
+                    if key == 'okuma_durumu':
+                        continue
+                    value = row_data.get(key, '')
+                    if value is None:
+                        text = ''
+                    elif key in ('miktar', 'beklenen'):
+                        num = float(value) if value else 0
+                        text = str(int(num)) if num == int(num) else str(num)
+                    elif key == 'fark':
+                        num = float(value) if value else 0
+                        text = str(int(num)) if num == int(num) else str(num)
+                        if num > 0:
+                            text = f'+{text}'
+                    else:
+                        text = str(value)
+                    item = QTableWidgetItem(text)
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    font = QFont(FONT_FAMILY, FONT_SIZE)
+                    font.setBold(True)
+                    item.setFont(font)
+                    # Fark sutunu yazi rengi
+                    if key == 'fark' and (beklenen_val != 0 or fark_val != 0):
+                        if fark_val < 0:
+                            item.setForeground(QColor('#dc2626'))
+                        elif fark_val > 0:
+                            item.setForeground(QColor('#ca8a04'))
+                        else:
+                            item.setForeground(QColor('#16a34a'))
+                    # Satir arka plan (Okuma Durumu haric)
+                    if row_bg is not None:
+                        item.setBackground(row_bg)
+                    self.table.setItem(i, j, item)
+
+                # Okuma Durumu sutunu
+                if okuma_col_idx is not None:
+                    miktar = int(float(row_data.get('miktar', 0) or 0))
+                    paket = int(row_data.get('paket_sayisi', 1) or 1)
+                    composite_key = row_data.get('composite_key')
+                    paket_readings = self.readings_map.get(composite_key, {})
+                    depo_no = str(row_data.get('lokasyon_kodu', '') or '')
+                    widget = _build_okuma_durumu_widget(miktar, paket, paket_readings, depo_no)
+                    self.table.setCellWidget(i, okuma_col_idx, widget)
+
+            header = self.table.horizontalHeader()
+            header.setMinimumSectionSize(100)
+            header.setSectionResizeMode(QHeaderView.ResizeToContents)
+            header.setStretchLastSection(False)
+
+            malzeme_adi_idx = next(
+                (j for j, (k, _) in enumerate(SAYIM_TABLE_COLUMNS) if k == 'malzeme_adi'),
+                len(SAYIM_TABLE_COLUMNS) - 2
+            )
+            header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.ResizeToContents)
+
+            if okuma_col_idx is not None:
+                if self.table.columnWidth(okuma_col_idx) < 200:
+                    self.table.setColumnWidth(okuma_col_idx, 200)
+
+            for i in range(self.table.rowCount()):
+                self.table.setRowHeight(i, ROW_HEIGHT)
+
+        finally:
+            self.table.setUpdatesEnabled(True)
+            self.table.setSortingEnabled(True)
+
+    # ==================== EXPORT ====================
+    def export_to_excel(self):
+        if not self.filtered_data:
+            self.status_label.setText("Disari aktarilacak veri yok")
+            return
+        try:
+            df = pd.DataFrame(self.filtered_data)
+            output_path = f"D:/GoogleDrive/~ Sayim_{self.lokasyon}_Export.xlsx"
+            df.to_excel(output_path, index=False, engine='openpyxl')
+            self.status_label.setText(f"Excel export: {output_path}")
+        except Exception as e:
+            self.status_label.setText(f"Export hatasi: {e}")
+
+    def export_to_csv(self):
+        if not self.btn_eksik.isChecked() and not self.btn_fazla.isChecked():
+            from PyQt5.QtWidgets import QMessageBox
+            msg = QMessageBox(QMessageBox.Warning, "CSV Export",
+                u"\u00d6nce 'Eksik' veya 'Fazla' butonuna basarak filtreleme yap\u0131n\u0131z.",
+                QMessageBox.Ok)
+            msg.setStyleSheet("QMessageBox { background-color: #f0f0f0; } "
+                "QLabel { color: #000000; } "
+                "QPushButton { background-color: #e0e0e0; color: #000000; padding: 6px 20px; }")
+            msg.exec_()
+            return
+        # Sadece okunan satirlari al (sayim_kodu bos olmayanlar)
+        csv_data = [r for r in self.filtered_data if r.get('sayim_kodu')]
+        if not csv_data:
+            self.status_label.setText("Disari aktarilacak veri yok")
+            return
+        try:
+            output_path = f"D:/GoogleDrive/~ Sayim_{self.lokasyon}_Rapor.csv"
+            with open(output_path, 'w', encoding='utf-8-sig') as f:
+                f.write('Malzeme Kodu;Fark;Malzeme Adi\n')
+                for row in csv_data:
+                    mk = str(row.get('malzeme_kodu', '')).replace(';', ',')
+                    ma = str(row.get('malzeme_adi', '')).replace(';', ',')
+                    fark = float(row.get('fark', 0) or 0)
+                    fark_abs = int(abs(fark))
+                    f.write(f'{mk};{fark_abs};{ma}\n')
+            self.status_label.setText(f"CSV export: {output_path} ({len(csv_data)} satir)")
+        except Exception as e:
+            self.status_label.setText(f"CSV export hatasi: {e}")
+
+    # ==================== KOPYALAMA ====================
+    def show_context_menu(self, pos):
+        menu = QMenu(self.table)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #a0a0a0;
+                padding: 4px 0px;
+            }
+            QMenu::item {
+                padding: 6px 24px;
+                color: #000000;
+                font-size: 14px;
+            }
+            QMenu::item:selected {
+                background-color: #3399ff;
+                color: #ffffff;
+            }
+        """)
+        hucre_action = QAction("Kopyala", self)
+        hucre_action.triggered.connect(lambda: self.copy_cell(pos))
+        menu.addAction(hucre_action)
+        menu.exec_(self.table.viewport().mapToGlobal(pos))
+
+    def copy_cell(self, pos):
+        item = self.table.itemAt(pos)
+        if item:
+            QApplication.clipboard().setText(item.text())
+
+    def handle_ctrl_c(self):
+        selected_items = self.table.selectedItems()
+        if not selected_items:
+            return
+        if len(selected_items) == 1:
+            QApplication.clipboard().setText(selected_items[0].text())
+        else:
+            rows = sorted({item.row() for item in selected_items})
+            cols = sorted({item.column() for item in selected_items})
+            text_data = ""
+            for r in rows:
+                row_items = []
+                for c in cols:
+                    item = self.table.item(r, c)
+                    if item and item.isSelected():
+                        row_items.append(item.text())
+                if row_items:
+                    text_data += "\t".join(row_items) + "\n"
+            if text_data:
+                QApplication.clipboard().setText(text_data.strip())
+
+
+
+# ================== SAYIM WIDGET (CONTAINER) ==================
+class SayimWidget(QWidget):
+    u"""Say\u0131m sekmesi - Lokasyonlara gore alt sekmeler icerir"""
+
+    def __init__(self):
+        super().__init__()
+        self.setStyleSheet("QWidget { background-color: #ffffff; }")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setTabPosition(QTabWidget.North)
+        self.tab_widget.setStyleSheet(TAB_STYLE)
+
+        self.depo_tab = SayimLokasyonWidget('DEPO', '100')
+        self.tab_widget.addTab(self.depo_tab, "DEPO")
+
+        self.exc_tab = SayimLokasyonWidget('EXC', '300')
+        self.tab_widget.addTab(self.exc_tab, "EXC")
+
+        self.sube_tab = SayimLokasyonWidget('SUBE', '200')
+        self.tab_widget.addTab(self.sube_tab, "SUBE")
+
+        layout.addWidget(self.tab_widget)
+
+
 # ================== PLACEHOLDER WIDGET ==================
+# ================== QR LOGLAMA THREAD + WIDGET ==================
+
+class QrLogStokLoadThread(QThread):
+    """PRGsheet'ten stok listesini yukler (Malzeme Adi, Malzeme Kodu, stok_kod)"""
+    data_loaded = pyqtSignal(list)  # [{stok_kod, malzeme_adi, malzeme_kodu}, ...]
+    error_occurred = pyqtSignal(str)
+
+    def run(self):
+        try:
+            from io import BytesIO
+            config_manager = CentralConfigManager()
+            sid = config_manager.MASTER_SPREADSHEET_ID
+            gsheets_url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=xlsx"
+            resp = requests.get(gsheets_url, timeout=30)
+            resp.raise_for_status()
+            stok_df = pd.read_excel(BytesIO(resp.content), sheet_name="Stok")
+
+            kod_col = stok_df.columns[0]
+            malzeme_adi_col = u'Malzeme Ad\u0131'
+            malzeme_kodu_col = 'Malzeme Kodu'
+
+            stok_list = []
+            for _, srow in stok_df.iterrows():
+                kod = str(srow[kod_col]).strip() if pd.notna(srow[kod_col]) else ''
+                if not kod:
+                    continue
+                mal_adi = str(srow[malzeme_adi_col]) if malzeme_adi_col in stok_df.columns and pd.notna(srow.get(malzeme_adi_col)) else ''
+                mal_kodu = str(srow[malzeme_kodu_col]).strip() if malzeme_kodu_col in stok_df.columns and pd.notna(srow.get(malzeme_kodu_col)) else ''
+                stok_list.append({
+                    'stok_kod': kod,
+                    'malzeme_adi': mal_adi,
+                    'malzeme_kodu': mal_kodu,
+                })
+            logger.info(f"QR Log: {len(stok_list)} urun yuklendi (PRGsheet)")
+            self.data_loaded.emit(stok_list)
+        except Exception as e:
+            logger.error(f"QR Log stok yukleme hatasi: {e}")
+            self.error_occurred.emit(str(e))
+
+
+class QrLogSearchThread(QThread):
+    """Bir urunun 6 tablodan okuma gecmisini arar"""
+    results_loaded = pyqtSignal(list)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, supabase_client, stok_kod):
+        super().__init__()
+        self.supabase_client = supabase_client
+        self.stok_kod = stok_kod
+
+    def run(self):
+        try:
+            results = self.supabase_client.get_qr_log_by_stok_kod(self.stok_kod)
+            self.results_loaded.emit(results)
+        except Exception as e:
+            logger.error(f"QR Log arama hatasi: {e}")
+            self.error_occurred.emit(str(e))
+
+
+class QrLogWidget(QWidget):
+    u"""QR Loglama sekmesi - Bir urunun tum barkod gecmisini gosterir"""
+
+    KAYNAK_COLORS = {
+        'Nakliye': '#3b82f6',    # mavi
+        u'Giri\u015f': '#22c55e',  # yesil
+        'Sevk': '#f97316',       # turuncu
+        u'Sat\u0131\u015f': '#ef4444',  # kirmizi
+        u'\u00c7\u0131k\u0131\u015f': '#a855f7',  # mor
+        u'Say\u0131m': '#6b7280',  # gri
+    }
+
+    def __init__(self):
+        super().__init__()
+        self._stok_loaded = False
+        self.stok_list = []       # [{stok_kod, malzeme_adi, malzeme_kodu}, ...]
+        self.supabase_client = None
+        self._init_clients()
+        self.setup_ui()
+        self.setup_connections()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._stok_loaded:
+            self._stok_loaded = True
+            QTimer.singleShot(100, self._load_stok_list)
+
+    def _init_clients(self):
+        try:
+            config_manager = CentralConfigManager()
+            settings = config_manager.get_settings()
+            supabase_url = (settings.get('Barkod_SUPABASE_URL') or
+                            settings.get('SUPABASE_URL', ''))
+            supabase_key = (settings.get('Barkod_SUPABASE_ANON_KEY') or
+                            settings.get('SUPABASE_ANON_KEY', ''))
+            if not supabase_url or not supabase_key:
+                config_manager.settings_cache = {}
+                settings = config_manager.get_settings(use_cache=False)
+                supabase_url = (settings.get('Barkod_SUPABASE_URL') or
+                                settings.get('SUPABASE_URL', ''))
+                supabase_key = (settings.get('Barkod_SUPABASE_ANON_KEY') or
+                                settings.get('SUPABASE_ANON_KEY', ''))
+            if supabase_url and supabase_key:
+                self.supabase_client = SupabaseClient(supabase_url, supabase_key)
+        except Exception as e:
+            logger.error(f"QR Log client init hatasi: {e}")
+
+    def setup_ui(self):
+        self.setObjectName("qrLogWidget")
+        self.setStyleSheet("#qrLogWidget { background-color: #ffffff; }")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        # --- Arama bölümü ---
+        search_layout = QHBoxLayout()
+
+        lbl = QLabel("Malzeme:")
+        lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #000;")
+        search_layout.addWidget(lbl)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText(u"Malzeme kodu veya ad\u0131 yazarak aray\u0131n...")
+        self.search_input.setStyleSheet(FILTER_INPUT_STYLE)
+        search_layout.addWidget(self.search_input, 1)
+
+        self.search_btn = QPushButton("Ara")
+        self.search_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6; color: white; font-weight: bold;
+                padding: 8px 20px; border-radius: 4px; font-size: 14px;
+            }
+            QPushButton:hover { background-color: #2563eb; }
+        """)
+        search_layout.addWidget(self.search_btn)
+
+        self.search_clear_btn = QPushButton("Temizle")
+        self.search_clear_btn.setStyleSheet(BUTTON_STYLE)
+        search_layout.addWidget(self.search_clear_btn)
+
+        self.btn_qr_esle = QPushButton(u"QR E\u015fle")
+        self.btn_qr_esle.setCheckable(True)
+        self.btn_qr_esle.setStyleSheet("""
+            QPushButton {
+                background-color: #dcfce7; color: black; border: 1px solid #444;
+                padding: 8px 16px; border-radius: 5px; font-size: 14px; font-weight: bold;
+                min-width: 80px;
+            }
+            QPushButton:hover { background-color: #bbf7d0; }
+            QPushButton:checked { background-color: #86efac; border: 1px solid #16a34a;
+                padding: 8px 16px; min-width: 80px; }
+        """)
+        search_layout.addWidget(self.btn_qr_esle)
+
+        self.export_button = QPushButton("Excel")
+        self.export_button.setStyleSheet(BUTTON_STYLE)
+        search_layout.addWidget(self.export_button)
+
+        search_widget = QWidget()
+        search_widget.setLayout(search_layout)
+        layout.addWidget(search_widget)
+
+        # --- Ürün listesi (dropdown) ---
+        self.product_list = QListWidget()
+        self.product_list.setMaximumHeight(200)
+        self.product_list.setStyleSheet("""
+            QListWidget {
+                font-size: 14px; background-color: #ffffff; color: #000000;
+                border: 1px solid #d0d0d0; padding: 4px;
+            }
+            QListWidget::item { padding: 6px; }
+            QListWidget::item:selected { background-color: #3b82f6; color: white; }
+            QListWidget::item:hover { background-color: #e0e7ff; }
+        """)
+        self.product_list.setVisible(False)
+        layout.addWidget(self.product_list)
+
+        # --- Seçilen ürün bilgisi ---
+        self.selected_label = QLabel("")
+        self.selected_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #1e40af; padding: 4px;")
+        layout.addWidget(self.selected_label)
+
+        # --- Sonuç tablosu ---
+        self.table = QTableWidget()
+        self.table.setStyleSheet(SAYIM_TABLE_STYLE)
+        self.table.setItemDelegate(NoFocusDelegate(self.table))
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setColumnCount(len(QR_LOG_TABLE_COLUMNS))
+        self.table.setHorizontalHeaderLabels([c[1] for c in QR_LOG_TABLE_COLUMNS])
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
+        layout.addWidget(self.table, 1)
+
+        # --- Alt bilgilendirme çubuğu ---
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("font-size: 13px; color: #333; padding: 4px;")
+        layout.addWidget(self.status_label)
+
+    def setup_connections(self):
+        self.search_input.textChanged.connect(self._on_search_text_changed)
+        self.search_btn.clicked.connect(self._on_search_btn)
+        self.search_clear_btn.clicked.connect(self._on_search_clear)
+        self.product_list.itemClicked.connect(self._on_product_selected)
+        self.search_input.returnPressed.connect(self._on_enter_pressed)
+        self.btn_qr_esle.clicked.connect(self._on_qr_esle)
+        self.export_button.clicked.connect(self.export_to_excel)
+
+    # ==================== STOK YÜKLEME ====================
+    def _load_stok_list(self):
+        self.status_label.setText(u"\u00dcr\u00fcn listesi y\u00fckl\u00fceniyor...")
+        self._stok_thread = QrLogStokLoadThread()
+        self._stok_thread.data_loaded.connect(self._on_stok_loaded)
+        self._stok_thread.error_occurred.connect(self._on_stok_error)
+        self._stok_thread.start()
+
+    def _on_stok_loaded(self, stok_list):
+        self.stok_list = stok_list
+        self.status_label.setText(f"{len(stok_list)} urun yuklendi")
+
+    def _on_stok_error(self, err):
+        self.status_label.setText(f"Stok yukleme hatasi: {err}")
+
+    # ==================== ARAMA ====================
+    def _on_search_text_changed(self, text=None):
+        text = self.search_input.text().strip()
+        if len(text) < 2:
+            self.product_list.setVisible(False)
+            return
+        # Fuzzy match — malzeme kodu veya adi
+        matches = []
+        for item in self.stok_list:
+            if _fuzzy_match(text, item.get('malzeme_kodu', '')) or _fuzzy_match(text, item.get('malzeme_adi', '')):
+                display = f"{item.get('malzeme_kodu', '')}  -  {item['malzeme_adi']}"
+                matches.append((display, item['stok_kod']))
+            if len(matches) >= 50:
+                break
+        self.product_list.clear()
+        if matches:
+            for display, sk in matches:
+                li = QListWidgetItem(display)
+                li.setData(Qt.UserRole, sk)
+                self.product_list.addItem(li)
+            self.product_list.setVisible(True)
+        else:
+            self.product_list.setVisible(False)
+
+    def _on_enter_pressed(self):
+        if self.product_list.isVisible() and self.product_list.count() > 0:
+            self.product_list.setCurrentRow(0)
+            self._on_product_selected(self.product_list.item(0))
+
+    def _on_search_btn(self):
+        self._on_enter_pressed()
+
+    def _on_search_clear(self):
+        self.search_input.clear()
+        self.product_list.setVisible(False)
+        self.btn_qr_esle.setChecked(False)
+        self.selected_label.setText("")
+        self.table.setRowCount(0)
+        self._all_results = []
+
+    def _on_product_selected(self, item):
+        stok_kod = item.data(Qt.UserRole)
+        display = item.text()
+        self.product_list.setVisible(False)
+        self.search_input.blockSignals(True)
+        self.search_input.setText(display)
+        self.search_input.blockSignals(False)
+        self.selected_label.setText(f"Araniyor: {display} (stok_kod: {stok_kod})")
+        self._search_qr_log(stok_kod)
+
+    def _search_qr_log(self, stok_kod):
+        if not self.supabase_client:
+            self.status_label.setText("Supabase ayarlari eksik")
+            return
+        self.status_label.setText("Arama yapiliyor...")
+        self.table.setRowCount(0)
+        self._search_thread = QrLogSearchThread(self.supabase_client, stok_kod)
+        self._search_thread.results_loaded.connect(self._on_results_loaded)
+        self._search_thread.error_occurred.connect(self._on_search_error)
+        self._search_thread.start()
+
+    def _on_results_loaded(self, results):
+        self._all_results = results  # tum sonuclari sakla (filtre icin)
+        self.btn_qr_esle.setChecked(False)
+        self.status_label.setText(f"{len(results)} okuma kaydi bulundu")
+        self._populate_table(results)
+
+    def _on_qr_esle(self):
+        """QR Esle: eslesen +/- satirlari gizle, eslesmeyenler kalsin"""
+        if not hasattr(self, '_all_results'):
+            return
+        checked = self.btn_qr_esle.isChecked()
+        if checked:
+            # + ve - tablolarindaki qr_kodlari bul
+            qr_giris = set()
+            qr_cikis = set()
+            for r in self._all_results:
+                qr = r.get('qr_kod', '')
+                if not qr or qr.startswith('MANUEL_TOPLU_'):
+                    continue
+                if r.get('yon') == '+':
+                    qr_giris.add(qr)
+                elif r.get('yon') == '-':
+                    qr_cikis.add(qr)
+            qr_tamamlanan = qr_giris & qr_cikis
+            # Eslesmeyenleri goster
+            filtered = [r for r in self._all_results
+                        if r.get('qr_kod', '') not in qr_tamamlanan]
+            self._populate_table(filtered)
+        else:
+            self._populate_table(self._all_results)
+
+    def export_to_excel(self):
+        if not hasattr(self, '_all_results') or not self._all_results:
+            self.status_label.setText("Disari aktarilacak veri yok")
+            return
+        try:
+            # Tabloda gorunen veriyi export et
+            if self.btn_qr_esle.isChecked():
+                qr_giris = set()
+                qr_cikis = set()
+                for r in self._all_results:
+                    qr = r.get('qr_kod', '')
+                    if not qr or qr.startswith('MANUEL_TOPLU_'):
+                        continue
+                    if r.get('yon') == '+':
+                        qr_giris.add(qr)
+                    elif r.get('yon') == '-':
+                        qr_cikis.add(qr)
+                qr_tamamlanan = qr_giris & qr_cikis
+                export_data = [r for r in self._all_results
+                               if r.get('qr_kod', '') not in qr_tamamlanan]
+            else:
+                export_data = self._all_results
+
+            df = pd.DataFrame(export_data)
+            output_path = "D:/GoogleDrive/~ QR_Loglama_Export.xlsx"
+            df.to_excel(output_path, index=False, engine='openpyxl')
+            self.status_label.setText(f"Excel export: {output_path} ({len(export_data)} satir)")
+        except Exception as e:
+            self.status_label.setText(f"Export hatasi: {e}")
+
+    def _on_search_error(self, err):
+        self.status_label.setText(f"Arama hatasi: {err}")
+
+    # ==================== TABLO ====================
+    def _populate_table(self, results):
+        self.table.setUpdatesEnabled(False)
+        self.table.setSortingEnabled(False)
+        try:
+            # QR kodlarin + ve - durumlarini belirle
+            qr_giris = set()   # + tablolarinda gecen qr_kodlar
+            qr_cikis = set()   # - tablolarinda gecen qr_kodlar
+            for r in results:
+                qr = r.get('qr_kod', '')
+                if not qr or qr.startswith('MANUEL_TOPLU_'):
+                    continue
+                if r.get('yon') == '+':
+                    qr_giris.add(qr)
+                elif r.get('yon') == '-':
+                    qr_cikis.add(qr)
+            # Hem girisi hem cikisi olan = tamamlanmis
+            qr_tamamlanan = qr_giris & qr_cikis
+
+            # LIFO siralama: tamamlanan QR kodlar uste,
+            # son cikis tarihi en yeni olan en uste
+            qr_last_cikis = {}  # qr_kod -> en son cikis tarihi
+            for r in results:
+                qr = r.get('qr_kod', '')
+                if qr in qr_tamamlanan and r.get('yon') == '-':
+                    tarih = r.get('tarih', '')
+                    if tarih > qr_last_cikis.get(qr, ''):
+                        qr_last_cikis[qr] = tarih
+
+            def lifo_sort_key(r):
+                qr = r.get('qr_kod', '')
+                is_tam = qr in qr_tamamlanan
+                # 0 = tamamlanan (uste), 1 = diger
+                # Tamamlananlar icinde: son cikis tarihi buyuk olan uste (desc)
+                last_cikis = qr_last_cikis.get(qr, '')
+                return (0 if is_tam else 1, '' if not last_cikis else chr(255) - last_cikis[0] if last_cikis else '', r.get('tarih', '') or '')
+
+            # Basit LIFO: tamamlananlar uste, kendi icinde qr_kod gruplari
+            tamamlanan_rows = []
+            diger_rows = []
+            for r in results:
+                qr = r.get('qr_kod', '')
+                if qr in qr_tamamlanan:
+                    tamamlanan_rows.append(r)
+                else:
+                    diger_rows.append(r)
+            # Tamamlanmamislar uste: paket kucukten buyuge, ayni pakette tarih yeniden eskiye
+            diger_rows.sort(key=lambda r: (
+                int(r.get('paket_sira', 0) or 0),
+                ''.join(chr(255 - ord(c)) for c in (r.get('tarih', '') or ''))
+            ))
+            # Tamamlananlari son cikis tarihine gore sirala (en yeni uste)
+            tamamlanan_rows.sort(key=lambda r: qr_last_cikis.get(r.get('qr_kod', ''), ''), reverse=True)
+            results = diger_rows + tamamlanan_rows
+
+            self.table.setRowCount(len(results))
+            for row_idx, row in enumerate(results):
+                qr = row.get('qr_kod', '')
+                is_tamamlanan = qr in qr_tamamlanan
+
+                for col_idx, (key, _) in enumerate(QR_LOG_TABLE_COLUMNS):
+                    val = str(row.get(key, '') or '')
+
+                    # Tarih formatla
+                    if key == 'tarih' and val:
+                        try:
+                            from datetime import datetime as dt, timedelta, timezone
+                            dt_obj = dt.fromisoformat(val.replace('Z', '+00:00'))
+                            dt_tr = dt_obj.astimezone(timezone(timedelta(hours=3)))
+                            val = dt_tr.strftime('%d.%m.%Y %H:%M')
+                        except Exception:
+                            val = val[:16]
+
+                    item = QTableWidgetItem(val)
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    item.setForeground(QBrush(QColor('#000000')))
+
+                    # Tamamlanmis satirlari acik yesil
+                    if is_tamamlanan and key != 'kaynak':
+                        item.setBackground(QBrush(QColor('#dcfce7')))
+
+                    # Yon sutunu renklendir
+                    if key == 'yon':
+                        item.setTextAlignment(Qt.AlignCenter)
+                        if val == '+':
+                            item.setForeground(QBrush(QColor('#16a34a')))
+                        elif val == '-':
+                            item.setForeground(QBrush(QColor('#dc2626')))
+
+                    # Kaynak renkli arka plan
+                    if key == 'kaynak':
+                        color = self.KAYNAK_COLORS.get(val, '#666666')
+                        item.setForeground(QBrush(QColor('#ffffff')))
+                        item.setBackground(QBrush(QColor(color)))
+                        item.setTextAlignment(Qt.AlignCenter)
+
+                    if key == 'paket_sira':
+                        ps = row.get('paket_sira', '')
+                        if ps:
+                            item.setText(f"P{ps}")
+                        item.setTextAlignment(Qt.AlignCenter)
+
+                    # QR kod tam halini data olarak sakla
+                    if key == 'qr_kod_kisa':
+                        item.setData(Qt.UserRole, row.get('qr_kod', ''))
+                        item.setToolTip(row.get('qr_kod', ''))
+
+                    self.table.setItem(row_idx, col_idx, item)
+
+            self.table.resizeColumnsToContents()
+
+            # Istatistik
+            tamamlanan_count = len(qr_tamamlanan)
+            toplam_qr = len(qr_giris | qr_cikis)
+            if toplam_qr > 0:
+                self.status_label.setText(
+                    f"{len(results)} okuma kaydi | {tamamlanan_count}/{toplam_qr} QR tamamlandi")
+            else:
+                self.status_label.setText(f"{len(results)} okuma kaydi bulundu")
+        finally:
+            self.table.setSortingEnabled(True)
+            self.table.setUpdatesEnabled(True)
+
+    # ==================== CONTEXT MENU ====================
+    def _context_menu(self, pos):
+        menu = QMenu(self.table)
+        menu.setStyleSheet("""
+            QMenu { background-color: #ffffff; border: 1px solid #a0a0a0; color: #000000; }
+            QMenu::item:selected { background-color: #b3d9ff; color: #000000; }
+        """)
+        copy_action = menu.addAction("Kopyala")
+        copy_qr_action = menu.addAction(u"QR Kodu Kopyala (tam)")
+
+        action = menu.exec_(self.table.viewport().mapToGlobal(pos))
+        if action == copy_action:
+            self._copy_selected()
+        elif action == copy_qr_action:
+            self._copy_qr_code()
+
+    def _copy_selected(self):
+        from PyQt5.QtWidgets import QApplication
+        items = self.table.selectedItems()
+        if items:
+            texts = [item.text() for item in items]
+            QApplication.clipboard().setText('\t'.join(texts))
+
+    def _copy_qr_code(self):
+        from PyQt5.QtWidgets import QApplication
+        row = self.table.currentRow()
+        if row >= 0:
+            qr_col = next(i for i, (k, _) in enumerate(QR_LOG_TABLE_COLUMNS) if k == 'qr_kod_kisa')
+            item = self.table.item(row, qr_col)
+            if item:
+                qr_full = item.data(Qt.UserRole) or item.text()
+                QApplication.clipboard().setText(qr_full)
+
+
 class PlaceholderWidget(QWidget):
     """Henuz icerigi olmayan sekmeler icin placeholder"""
 
@@ -5341,7 +6813,10 @@ class BarkodApp(QWidget):
         self.tab_widget.addTab(self.nakliye_tab, u"Nakliye Y\u00fckleme")
         self.sevk_tab = SevkFisiWidget()
         self.tab_widget.addTab(self.sevk_tab, u"Depolar Aras\u0131 Sevk")
-        self.tab_widget.addTab(PlaceholderWidget(u"Say\u0131m"), u"Say\u0131m")
+        self.qr_log_tab = QrLogWidget()
+        self.tab_widget.addTab(self.qr_log_tab, "QR Loglama")
+        self.sayim_tab = SayimWidget()
+        self.tab_widget.addTab(self.sayim_tab, u"Say\u0131m")
         self.giris_tab = GirisFisiWidget()
         self.tab_widget.addTab(self.giris_tab, u"Di\u011fer Giri\u015fler")
         self.cikis_tab = CikisFisiWidget()
