@@ -228,7 +228,7 @@ class AyarlarApp(QWidget):
 
         # Ctrl+C kısayolu - Ayar tablosu
         self.copy_shortcut_ayar = QShortcut(QKeySequence("Ctrl+C"), self.ayar_table)
-        self.copy_shortcut_ayar.activated.connect(lambda: self.copy_table_selection(self.ayar_table))
+        self.copy_shortcut_ayar.activated.connect(lambda: self.copy_table_selection(self.ayar_table, self.ayar_status))
 
         # Status Label
         self.ayar_status = QLabel("Hazır")
@@ -335,7 +335,7 @@ class AyarlarApp(QWidget):
 
         # Ctrl+C kısayolu - Mail tablosu
         self.copy_shortcut_mail = QShortcut(QKeySequence("Ctrl+C"), self.mail_table)
-        self.copy_shortcut_mail.activated.connect(lambda: self.copy_table_selection(self.mail_table))
+        self.copy_shortcut_mail.activated.connect(lambda: self.copy_table_selection(self.mail_table, self.mail_status))
 
         # Status Label
         self.mail_status = QLabel("Hazır")
@@ -798,7 +798,7 @@ class AyarlarApp(QWidget):
 
         # Ctrl+C kısayolu - NoRisk tablosu
         self.copy_shortcut_norisk = QShortcut(QKeySequence("Ctrl+C"), self.norisk_table)
-        self.copy_shortcut_norisk.activated.connect(lambda: self.copy_table_selection(self.norisk_table))
+        self.copy_shortcut_norisk.activated.connect(lambda: self.copy_table_selection(self.norisk_table, self.norisk_status))
 
         # Status Label
         self.norisk_status = QLabel("Hazır")
@@ -1032,21 +1032,21 @@ class AyarlarApp(QWidget):
             )
             status_label.setText(f"❌ Kayıt hatası: {str(e)}")
 
-    def copy_table_selection(self, table):
+    def copy_table_selection(self, table, status_label=None):
         """Tablodaki seçili hücreyi/hücreleri kopyala"""
         from PyQt5.QtWidgets import QApplication
-        
+
         selected_items = table.selectedItems()
         if not selected_items:
             return
 
-        # Sadece ilk seçili öğeyi kopyala (basitlik için)
         text = selected_items[0].text()
         if text:
             QApplication.clipboard().setText(text)
-            # Find status label if possible, or just pass silently
-            # self.status_label equivalent is separate for each tab, so we might skip status update 
-            # or try to find parent tab's status label.
-            # Simplified: just copy. 
+            if status_label:
+                old_text = status_label.text()
+                status_label.setText("✅ Kopyalandı")
+                QTimer.singleShot(1500, lambda t=old_text, sl=status_label: sl.setText(t))
         else:
-            pass
+            if status_label:
+                status_label.setText("⚠️ Boş hücre")

@@ -904,8 +904,9 @@ class SshModule(QMainWindow):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         
-        # Ctrl+C kısayolu
-        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        # Ctrl+C kısayolu - self üzerine bağlanır ki focus nerede olursa olsun çalışsın
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self.copy_shortcut.setContext(Qt.WindowShortcut)
         self.copy_shortcut.activated.connect(self.handle_ctrl_c)
 
         layout.addWidget(self.table)
@@ -951,7 +952,9 @@ class SshModule(QMainWindow):
         """Tıklanan hücreyi kopyala"""
         if item and item.text():
             QApplication.clipboard().setText(item.text())
+            old_text = self.status_label.text()
             self.status_label.setText("✅ Kopyalandı")
+            QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
         else:
             self.status_label.setText("⚠️ Boş hücre")
 

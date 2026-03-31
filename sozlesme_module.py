@@ -3794,10 +3794,23 @@ class ContractDetailsWindow(QMainWindow):
             products_table.setContextMenuPolicy(Qt.CustomContextMenu)
             products_table.customContextMenuRequested.connect(self.show_table_context_menu)
 
-            # Seçim modunu ayarla
-            products_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+            # Ctrl+C kısayolu - self üzerine bağlanır ki focus nerede olursa olsun çalışsın
+            self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+            self.copy_shortcut.setContext(Qt.WindowShortcut)
+            self.copy_shortcut.activated.connect(self._handle_ctrl_c_contract)
 
         except Exception as e:
+            pass
+
+    def _handle_ctrl_c_contract(self):
+        """Ctrl+C ile aktif hücreyi kopyala"""
+        try:
+            products_table = self.find_products_table()
+            if products_table:
+                item = products_table.currentItem()
+                if item:
+                    self.copy_table_cell(products_table, item)
+        except Exception:
             pass
 
     def show_table_context_menu(self, position):
@@ -3830,23 +3843,11 @@ class ContractDetailsWindow(QMainWindow):
             """)
 
             copy_cell_action = menu.addAction("📋 Hücreyi Kopyala")
-            copy_row_action = menu.addAction("📋 Satırı Kopyala")
-            copy_column_action = menu.addAction("📋 Sütunu Kopyala")
-            copy_selection_action = menu.addAction("📋 Seçimi Kopyala")
-            copy_all_action = menu.addAction("📋 Tüm Tabloyu Kopyala")
 
             action = menu.exec_(products_table.viewport().mapToGlobal(position))
 
             if action == copy_cell_action:
                 self.copy_table_cell(products_table, item)
-            elif action == copy_row_action:
-                self.copy_table_row(products_table, item.row())
-            elif action == copy_column_action:
-                self.copy_table_column(products_table, item.column())
-            elif action == copy_selection_action:
-                self.copy_table_selection(products_table)
-            elif action == copy_all_action:
-                self.copy_entire_table(products_table)
 
         except Exception as e:
             pass
@@ -3855,79 +3856,7 @@ class ContractDetailsWindow(QMainWindow):
         """Tek hücreyi kopyala"""
         if item:
             QApplication.clipboard().setText(item.text())
-
-    def copy_table_row(self, table, row):
-        """Satırı kopyala"""
-        row_data = []
-        for col in range(table.columnCount()):
-            item = table.item(row, col)
-            row_data.append(item.text() if item else '')
-
-        clipboard_text = '\t'.join(row_data)
-        QApplication.clipboard().setText(clipboard_text)
-
-    def copy_table_column(self, table, column):
-        """Sütunu kopyala"""
-        column_data = []
-        # Header ekle
-        header_item = table.horizontalHeaderItem(column)
-        if header_item:
-            column_data.append(header_item.text())
-
-        # Tüm satırların o sütununu ekle
-        for row in range(table.rowCount()):
-            item = table.item(row, column)
-            column_data.append(item.text() if item else '')
-
-        clipboard_text = '\n'.join(column_data)
-        QApplication.clipboard().setText(clipboard_text)
-
-    def copy_table_selection(self, table):
-        """Seçili hücreleri kopyala"""
-        selected_items = table.selectedItems()
-        if not selected_items:
-            return
-
-        # Seçili hücreleri satır/sütun bazında organize et
-        selected_ranges = {}
-        for item in selected_items:
-            row, col = item.row(), item.column()
-            if row not in selected_ranges:
-                selected_ranges[row] = {}
-            selected_ranges[row][col] = item.text()
-
-        # Clipboard formatında düzenle
-        data = []
-        for row in sorted(selected_ranges.keys()):
-            row_data = []
-            for col in sorted(selected_ranges[row].keys()):
-                row_data.append(selected_ranges[row][col])
-            data.append('\t'.join(row_data))
-
-        clipboard_text = '\n'.join(data)
-        QApplication.clipboard().setText(clipboard_text)
-
-    def copy_entire_table(self, table):
-        """Tüm tabloyu kopyala"""
-        data = []
-
-        # Headers ekle
-        headers = []
-        for col in range(table.columnCount()):
-            header_item = table.horizontalHeaderItem(col)
-            headers.append(header_item.text() if header_item else f"Sütun {col+1}")
-        data.append('\t'.join(headers))
-
-        # Tüm satırları ekle
-        for row in range(table.rowCount()):
-            row_data = []
-            for col in range(table.columnCount()):
-                item = table.item(row, col)
-                row_data.append(item.text() if item else '')
-            data.append('\t'.join(row_data))
-
-        clipboard_text = '\n'.join(data)
-        QApplication.clipboard().setText(clipboard_text)
+            QToolTip.showText(QCursor.pos(), "✅ Kopyalandı", self, QRect(), 1500)
 
     def handle_products_table_edit(self, item, table):
         """ÜRÜNLER tablosunda hücre düzenlendiğinde çalışır"""
@@ -4825,6 +4754,12 @@ class SozlesmeApp(QMainWindow):
         self.siparis_calisiyor = False  # Siparis program çalışma durumu
         self._data_loaded = False  # Lazy loading için flag
         self.setup_ui()
+
+        # Ctrl+C kısayolu - self üzerine bağlanır ki focus nerede olursa olsun çalışsın
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self.copy_shortcut.setContext(Qt.WindowShortcut)
+        self.copy_shortcut.activated.connect(self.copy_selection)
+
         self.show()
 
     def showEvent(self, event):
@@ -5817,6 +5752,9 @@ class SozlesmeApp(QMainWindow):
                 clipboard_text.append("\t".join(row_data))
 
             QApplication.clipboard().setText("\n".join(clipboard_text))
+            old_text = self.status_label.text()
+            self.status_label.setText("✅ Kopyalandı")
+            QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
     
     def clean_data(self):
         """Veri temizleme işlemleri"""

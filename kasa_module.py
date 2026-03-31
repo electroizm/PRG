@@ -599,8 +599,9 @@ class KasaApp(QWidget):
         self.dekont_checkbox.clicked.connect(self._on_dekont_checkbox_clicked)
         self.alacak_checkbox.clicked.connect(self._on_alacak_checkbox_clicked)
 
-        # Ctrl+C kısayolu
-        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        # Ctrl+C kısayolu - self üzerine bağlanır ki focus nerede olursa olsun çalışsın
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self.copy_shortcut.setContext(Qt.WindowShortcut)
         self.copy_shortcut.activated.connect(self.handle_ctrl_c)
 
     def load_data(self, force_reload=False):
@@ -1062,7 +1063,9 @@ class KasaApp(QWidget):
         """Tıklanan hücreyi kopyala"""
         if item and item.text():
             QApplication.clipboard().setText(item.text())
+            old_text = self.status_label.text()
             self.status_label.setText("✅ Kopyalandı")
+            QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
         else:
             self.status_label.setText("⚠️ Boş hücre")
     

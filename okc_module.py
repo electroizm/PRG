@@ -345,8 +345,9 @@ class OKCYazarKasaApp(QWidget):
         table.cellDoubleClicked.connect(self.on_row_double_click)
         table.customContextMenuRequested.connect(self.show_context_menu)
         
-        # Ctrl+C Kısayolu Ekle
-        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), table)
+        # Ctrl+C kısayolu - self üzerine bağlanır ki focus nerede olursa olsun çalışsın
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self.copy_shortcut.setContext(Qt.WindowShortcut)
         self.copy_shortcut.activated.connect(self.handle_ctrl_c)
         
         return table
@@ -361,9 +362,8 @@ class OKCYazarKasaApp(QWidget):
             
             # Status bar güncelle
             old_text = self.status_label.text()
-            self.status_label.setText("📋 Hücre içeriği kopyalandı")
-            # 2 saniye sonra status'u eski haline getir
-            QTimer.singleShot(2000, lambda: self.status_label.setText(old_text))
+            self.status_label.setText("✅ Kopyalandı")
+            QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     def _create_status_bar(self) -> QWidget:
         """Status bar widget'ını oluştur"""

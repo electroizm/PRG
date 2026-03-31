@@ -834,7 +834,9 @@ class VirmanModule(QWidget):
         text = selected_items[0].text()
         if text:
             QApplication.clipboard().setText(text)
+            old_text = self.status_label.text()
             self.status_label.setText("✅ Kopyalandı")
+            QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
         else:
             self.status_label.setText("⚠️ Boş hücre")
 

@@ -370,6 +370,23 @@ class IrsaliyeWindow(QMainWindow):
         self.refresh_button.clicked.connect(self.load_data)
         self.stok_aktar_button.clicked.connect(self.run_bagkodu)
         self.irsaliye_kaydet_button.clicked.connect(self.irsaliye_kaydet)
+
+        # Ctrl+C kısayolu - Qt.NoFocus tablolar için window-level bağlantı
+        from PyQt5.QtWidgets import QShortcut
+        from PyQt5.QtGui import QKeySequence
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self.copy_shortcut.setContext(Qt.WindowShortcut)
+        self.copy_shortcut.activated.connect(self._handle_ctrl_c_irsaliye)
+
+    def _handle_ctrl_c_irsaliye(self):
+        """Aktif tab'daki tablodan seçili hücreleri kopyala"""
+        widget = self.tab_widget.currentWidget()
+        if isinstance(widget, CopyableTableWidget):
+            widget.copy_selection()
+            if widget.selectedItems():
+                old_text = self.status_label.text()
+                self.status_label.setText("✅ Kopyalandı")
+                QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
     
     def load_data(self):
         """Google Sheets'ten Fatura ve Irsaliye sayfalarından verileri yükle"""

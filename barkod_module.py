@@ -3182,7 +3182,9 @@ class SatisTeslimatWidget(QWidget):
         self.table.setFocusPolicy(Qt.StrongFocus)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
-        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        # Ctrl+C kısayolu - self üzerine bağlanır ki focus nerede olursa olsun çalışsın
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self.copy_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self.copy_shortcut.activated.connect(self.handle_ctrl_c)
         layout.addWidget(self.table, 3)
 
@@ -3642,6 +3644,9 @@ class SatisTeslimatWidget(QWidget):
         item = self.table.itemAt(pos)
         if item:
             QApplication.clipboard().setText(item.text())
+            old_text = self.status_label.text()
+            self.status_label.setText("✅ Kopyalandı")
+            QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     def copy_selection(self):
         selected = self.table.selectedItems()
@@ -3657,6 +3662,9 @@ class SatisTeslimatWidget(QWidget):
                 row_data.append(item.text() if item else "")
             clipboard_text.append("\t".join(row_data))
         QApplication.clipboard().setText("\n".join(clipboard_text))
+        old_text = self.status_label.text()
+        self.status_label.setText("✅ Kopyalandı")
+        QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     def handle_ctrl_c(self):
         selected_items = self.table.selectedItems()
@@ -3678,6 +3686,9 @@ class SatisTeslimatWidget(QWidget):
                     text_data += "\t".join(row_items) + "\n"
             if text_data:
                 QApplication.clipboard().setText(text_data.strip())
+        old_text = self.status_label.text()
+        self.status_label.setText("✅ Kopyalandı")
+        QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     # ==================== LOG ====================
     def log(self, message: str):
@@ -3752,7 +3763,9 @@ class NakliyeYuklemeWidget(QWidget):
         self.table.setFocusPolicy(Qt.StrongFocus)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
-        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        # Ctrl+C kısayolu - self üzerine bağlanır ki focus nerede olursa olsun çalışsın
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self.copy_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self.copy_shortcut.activated.connect(self.handle_ctrl_c)
         layout.addWidget(self.table, 3)
 
@@ -4088,6 +4101,9 @@ class NakliyeYuklemeWidget(QWidget):
         item = self.table.itemAt(pos)
         if item:
             QApplication.clipboard().setText(item.text())
+            old_text = self.status_label.text()
+            self.status_label.setText("✅ Kopyalandı")
+            QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     def copy_selection(self):
         selected = self.table.selectedItems()
@@ -4103,6 +4119,9 @@ class NakliyeYuklemeWidget(QWidget):
                 row_data.append(item.text() if item else "")
             clipboard_text.append("\t".join(row_data))
         QApplication.clipboard().setText("\n".join(clipboard_text))
+        old_text = self.status_label.text()
+        self.status_label.setText("✅ Kopyalandı")
+        QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     def handle_ctrl_c(self):
         selected_items = self.table.selectedItems()
@@ -4124,6 +4143,9 @@ class NakliyeYuklemeWidget(QWidget):
                     text_data += "\t".join(row_items) + "\n"
             if text_data:
                 QApplication.clipboard().setText(text_data.strip())
+        old_text = self.status_label.text()
+        self.status_label.setText("✅ Kopyalandı")
+        QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     def log(self, message: str):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -4241,7 +4263,9 @@ class CikisFisiWidget(QWidget):
         self.table.setFocusPolicy(Qt.StrongFocus)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
-        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        # Ctrl+C kısayolu - self üzerine bağlanır ki focus nerede olursa olsun çalışsın
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self.copy_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self.copy_shortcut.activated.connect(self.handle_ctrl_c)
         layout.addWidget(self.table, 3)
 
@@ -4626,6 +4650,9 @@ class CikisFisiWidget(QWidget):
         item = self.table.itemAt(pos)
         if item:
             QApplication.clipboard().setText(item.text())
+            old_text = self.status_label.text()
+            self.status_label.setText("✅ Kopyalandı")
+            QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     def handle_ctrl_c(self):
         selected_items = self.table.selectedItems()
@@ -4647,6 +4674,9 @@ class CikisFisiWidget(QWidget):
                     text_data += "\t".join(row_items) + "\n"
             if text_data:
                 QApplication.clipboard().setText(text_data.strip())
+        old_text = self.status_label.text()
+        self.status_label.setText("✅ Kopyalandı")
+        QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     # ==================== LOG ====================
     def log(self, message: str):
@@ -4765,7 +4795,9 @@ class GirisFisiWidget(QWidget):
         self.table.setFocusPolicy(Qt.StrongFocus)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
-        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        # Ctrl+C kısayolu - self üzerine bağlanır ki focus nerede olursa olsun çalışsın
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self.copy_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self.copy_shortcut.activated.connect(self.handle_ctrl_c)
         layout.addWidget(self.table, 3)
 
@@ -5150,6 +5182,9 @@ class GirisFisiWidget(QWidget):
         item = self.table.itemAt(pos)
         if item:
             QApplication.clipboard().setText(item.text())
+            old_text = self.status_label.text()
+            self.status_label.setText("✅ Kopyalandı")
+            QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     def handle_ctrl_c(self):
         selected_items = self.table.selectedItems()
@@ -5171,6 +5206,9 @@ class GirisFisiWidget(QWidget):
                     text_data += "\t".join(row_items) + "\n"
             if text_data:
                 QApplication.clipboard().setText(text_data.strip())
+        old_text = self.status_label.text()
+        self.status_label.setText("✅ Kopyalandı")
+        QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     # ==================== LOG ====================
     def log(self, message: str):
@@ -5289,7 +5327,9 @@ class SevkFisiWidget(QWidget):
         self.table.setFocusPolicy(Qt.StrongFocus)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
-        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        # Ctrl+C kısayolu - self üzerine bağlanır ki focus nerede olursa olsun çalışsın
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self.copy_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self.copy_shortcut.activated.connect(self.handle_ctrl_c)
         layout.addWidget(self.table, 3)
 
@@ -5674,6 +5714,9 @@ class SevkFisiWidget(QWidget):
         item = self.table.itemAt(pos)
         if item:
             QApplication.clipboard().setText(item.text())
+            old_text = self.status_label.text()
+            self.status_label.setText("✅ Kopyalandı")
+            QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     def handle_ctrl_c(self):
         selected_items = self.table.selectedItems()
@@ -5695,6 +5738,9 @@ class SevkFisiWidget(QWidget):
                     text_data += "\t".join(row_items) + "\n"
             if text_data:
                 QApplication.clipboard().setText(text_data.strip())
+        old_text = self.status_label.text()
+        self.status_label.setText("✅ Kopyalandı")
+        QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     # ==================== LOG ====================
     def log(self, message: str):
@@ -5787,7 +5833,9 @@ class SayimLokasyonWidget(QWidget):
         self.table.setFocusPolicy(Qt.StrongFocus)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
-        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        # Ctrl+C kısayolu - self üzerine bağlanır ki focus nerede olursa olsun çalışsın
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self.copy_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self.copy_shortcut.activated.connect(self.handle_ctrl_c)
         layout.addWidget(self.table, 1)
 
@@ -6214,6 +6262,9 @@ class SayimLokasyonWidget(QWidget):
         item = self.table.itemAt(pos)
         if item:
             QApplication.clipboard().setText(item.text())
+            old_text = self.status_label.text()
+            self.status_label.setText("✅ Kopyalandı")
+            QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
     def handle_ctrl_c(self):
         selected_items = self.table.selectedItems()
@@ -6235,6 +6286,9 @@ class SayimLokasyonWidget(QWidget):
                     text_data += "\t".join(row_items) + "\n"
             if text_data:
                 QApplication.clipboard().setText(text_data.strip())
+        old_text = self.status_label.text()
+        self.status_label.setText("✅ Kopyalandı")
+        QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
 
 
 
