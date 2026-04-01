@@ -21,7 +21,7 @@ from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QProgressBar, QLabel, QTableWidget, QTableWidgetItem,
                              QHeaderView, QTextEdit, QLineEdit, QTabWidget,
-                             QApplication, QMenu, QAction, QShortcut,
+                             QApplication, QMenu, QAction, QShortcut, QMessageBox,
                              QStyledItemDelegate, QStyle, QListWidget, QListWidgetItem)
 from PyQt5.QtGui import QFont, QKeySequence, QColor, QBrush
 
@@ -1066,7 +1066,12 @@ class SupabaseClient:
             if lokasyon:
                 params['lokasyon'] = f'eq.{lokasyon}'
             response = _request_with_retry(requests.get, url, headers=self.headers, params=params, timeout=60)
-            response.raise_for_status()
+            if not response.ok:
+                try:
+                    detail = response.json()
+                except Exception:
+                    detail = response.text
+                raise Exception(f"Supabase {response.status_code} hatası: {detail}")
             batch = response.json()
             all_data.extend(batch)
             if len(batch) < current_limit:
@@ -1204,6 +1209,7 @@ class DogtasApiClient:
         self.client_secret = config.get('clientSecret', '')
         self.application_code = config.get('applicationCode', '')
         self.customer_no = config.get('CustomerNo', '')
+        self.nakliye_endpoint = config.get('nakliye', '')
 
         self._token = None
         self._token_expires_at = None
@@ -1279,6 +1285,40 @@ class DogtasApiClient:
 
         return result
 
+    def get_shipments(self, date_start: str, date_end: str, nakliye_no: str = '') -> list:
+        """
+        Nakliye fisleri cek.
+        date_start, date_end: DD.MM.YYYY formatinda
+        Returns: API'den gelen ham item listesi (EAN bos olanlar filtrelenir)
+        """
+        if not self.nakliye_endpoint:
+            raise Exception("Dogtas nakliye endpoint ayarlanmamis (PRGsheet 'nakliye' ayarini kontrol edin)")
+
+        token = self._get_token()
+        url = f"{self.base_url}{self.nakliye_endpoint}"
+        payload = {
+            'deliveryDocument': '',
+            'orderer': self.customer_no,
+            'transportationNumber': nakliye_no,
+            'documentDateStart': date_start,
+            'documentDateEnd': date_end
+        }
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
+        }
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
+        response.raise_for_status()
+        data = response.json()
+
+        if data.get('isSuccess') and isinstance(data.get('data'), list):
+            # Yari mamulleri filtrele - EAN bos olanlar yari mamuldre
+            return [item for item in data['data']
+                    if str(item.get('ean', '') or '').strip()]
+        raise Exception(
+            f"Dogtas GetShipments hatasi: {data.get('message', 'Bilinmeyen hata')}"
+        )
+
 
 # ================== LOAD DATA THREAD ==================
 class LoadDataThread(QThread):
@@ -1340,6 +1380,92 @@ class LoadDataThread(QThread):
                 logger.warning(f"Okuma verileri yuklenemedi: {e}")
 
             self.data_loaded.emit(all_data, readings_map)
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+
+# ================== FABRIKA NAKLIYE PLAN LOAD THREAD ==================
+class FabrikaNakliyeLoadDataThread(QThread):
+    """PRGsheet Bekleyenler + Dogtas API nakliye verilerini arka planda yukler"""
+
+    data_loaded = pyqtSignal(list, list, dict)  # (rows, column_names, nakliye_map)
+    error_occurred = pyqtSignal(str)
+    status_update = pyqtSignal(str)
+
+    def __init__(self, dogtas_client, date_start: str, date_end: str):
+        super().__init__()
+        self.dogtas_client = dogtas_client
+        self.date_start = date_start  # DD.MM.YYYY
+        self.date_end = date_end      # DD.MM.YYYY
+
+    def run(self):
+        try:
+            from io import BytesIO
+            config_manager = CentralConfigManager()
+            sid = config_manager.MASTER_SPREADSHEET_ID
+
+            # 1. PRGsheet Bekleyenler sayfasini cek
+            self.status_update.emit("PRGsheet 'Bekleyenler' sayfasi yukleniyor...")
+            gsheets_url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=xlsx"
+            resp = requests.get(gsheets_url, timeout=30)
+            resp.raise_for_status()
+            df = pd.read_excel(BytesIO(resp.content), sheet_name="Bekleyenler")
+
+            # 2. "Durum" = "Sevke Hazir" filtrele
+            durum_col = next((c for c in df.columns if str(c).strip() == 'Durum'), None)
+            if durum_col is None:
+                raise Exception("'Bekleyenler' sayfasinda 'Durum' sutunu bulunamadi")
+            df = df[df[durum_col].astype(str).str.strip() == u'Sevke Haz\u0131r']
+
+            column_names = [str(c) for c in df.columns]
+            rows = []
+            for _, row in df.iterrows():
+                row_dict = {}
+                for col in df.columns:
+                    val = row[col]
+                    try:
+                        is_na = pd.isna(val)
+                    except (TypeError, ValueError):
+                        is_na = False
+                    row_dict[str(col)] = '' if is_na else str(val)
+                rows.append(row_dict)
+
+            logger.info(f"FabrikaNakliye: {len(rows)} 'Sevke Hazir' kaydi yuklendi")
+            self.status_update.emit(
+                f"{len(rows)} 'Sevke Hazir' kayit bulundu, Dogtas nakliye verileri cekiliyor..."
+            )
+
+            # 3. Dogtas API'den nakliye kalemlerini cek
+            # nakliye_map: {satinalma_kalem_id: [{'nakliye_no', 'plaka', 'tarih', ...}]}
+            nakliye_map = {}
+            if self.dogtas_client:
+                try:
+                    items = self.dogtas_client.get_shipments(
+                        self.date_start, self.date_end
+                    )
+                    for item in items:
+                        # satinalma_kalem_id = referenceDocumentNumber + referenceItemNumber
+                        ref_no = str(item.get('referenceDocumentNumber', '') or '').strip()
+                        ref_item = str(item.get('referenceItemNumber', '') or '').strip()
+                        kid = ref_no + ref_item
+                        if kid:
+                            if kid not in nakliye_map:
+                                nakliye_map[kid] = []
+                            nakliye_map[kid].append({
+                                'nakliye_no': str(item.get('distributionDocumentNumber', '') or ''),
+                                'plaka': str(item.get('shipmentVehicleLicensePlate', '') or ''),
+                                'sofor': str(item.get('shipmentVehicleDriverName', '') or ''),
+                                'tarih': str(item.get('documanetDate', '') or ''),
+                                'malzeme_no': str(item.get('materialNumber', '') or ''),
+                                'malzeme_adi': str(item.get('materialName', '') or ''),
+                                'depo': str(item.get('storageLocation', '') or ''),
+                            })
+                    logger.info(f"FabrikaNakliye: {len(items)} kalem, {len(nakliye_map)} benzersiz kalem id yuklendi")
+                except Exception as e:
+                    logger.warning(f"FabrikaNakliye Dogtas verileri yuklenemedi: {e}")
+                    self.status_update.emit(f"Dogtas hatasi: {e}")
+
+            self.data_loaded.emit(rows, column_names, nakliye_map)
         except Exception as e:
             self.error_occurred.emit(str(e))
 
@@ -3695,6 +3821,728 @@ class SatisTeslimatWidget(QWidget):
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_text.append(f"[{timestamp}] {message}")
         # Max 100 satir
+        doc = self.log_text.document()
+        if doc.blockCount() > 100:
+            cursor = self.log_text.textCursor()
+            cursor.movePosition(cursor.MoveOperation.Start)
+            cursor.movePosition(cursor.MoveOperation.Down, cursor.MoveMode.KeepAnchor,
+                                doc.blockCount() - 100)
+            cursor.removeSelectedText()
+
+
+# ================== FABRIKA NAKLIYE PLAN WIDGET ==================
+class FabrikaNakliyePlanWidget(QWidget):
+    u"""Fabrika Nakliye Plan\u0131 sekmesi - PRGsheet Bekleyenler + Supabase nakliye eslestirmesi"""
+
+    def __init__(self):
+        super().__init__()
+        self._data_loaded = False
+        self.dogtas_client = None
+        self._init_clients()
+        self.all_data = []
+        self.filtered_data = []
+        self.column_names = []
+        self.nakliye_map = {}
+        self.kalem_no_col = None
+        self.setup_ui()
+        self.setup_connections()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._data_loaded:
+            self._data_loaded = True
+            QTimer.singleShot(100, self.load_data)
+
+    def _init_clients(self):
+        try:
+            config_manager = CentralConfigManager()
+            settings = config_manager.get_settings()
+            dogtas_config = {
+                'base_url': settings.get('base_url', ''),
+                'nakliye': settings.get('nakliye', ''),
+                'userName': settings.get('userName', ''),
+                'password': settings.get('password', ''),
+                'clientId': settings.get('clientId', ''),
+                'clientSecret': settings.get('clientSecret', ''),
+                'applicationCode': settings.get('applicationCode', ''),
+                'CustomerNo': settings.get('CustomerNo', ''),
+            }
+            if dogtas_config['base_url'] and dogtas_config['nakliye']:
+                self.dogtas_client = DogtasApiClient(dogtas_config)
+            else:
+                logger.warning("FabrikaNakliye: Dogtas API ayarlari eksik (base_url veya nakliye endpoint)")
+        except Exception as e:
+            logger.error(f"FabrikaNakliye client init hatasi: {e}")
+
+    def setup_ui(self):
+        self.setStyleSheet("QWidget { background-color: #ffffff; }")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        layout.addWidget(self._create_header())
+        layout.addWidget(self._create_filter_bar())
+
+        self.table = QTableWidget()
+        self.table.setStyleSheet(TABLE_STYLE)
+        self.table.setItemDelegate(NoFocusDelegate(self.table))
+        self.table.setSelectionBehavior(QTableWidget.SelectItems)
+        self.table.setSelectionMode(QTableWidget.ExtendedSelection)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setFocusPolicy(Qt.StrongFocus)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self)
+        self.copy_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self.copy_shortcut.activated.connect(self.handle_ctrl_c)
+        layout.addWidget(self.table, 3)
+
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMaximumHeight(100)
+        self.log_text.setStyleSheet(LOG_STYLE)
+        layout.addWidget(self.log_text, 1)
+
+        self.status_label = QLabel("Hazir")
+        self.status_label.setStyleSheet("QLabel { color: #6b7280; font-size: 12px; padding: 4px; }")
+        layout.addWidget(self.status_label)
+
+    def _create_header(self) -> QWidget:
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+
+        _header_btn_style = """
+            QPushButton {
+                background-color: #dfdfdf; color: black;
+                border: 1px solid #444; padding: 8px 16px;
+                border-radius: 5px; font-size: 14px; font-weight: bold;
+                min-width: 110px; max-width: 110px;
+            }
+            QPushButton:hover { background-color: #a0a5a2; }
+            QPushButton:disabled { background-color: #f0f0f0; color: #999; }
+        """
+        self.refresh_button = QPushButton("Yenile")
+        self.refresh_button.setStyleSheet(_header_btn_style)
+
+        self.export_button = QPushButton("Excel")
+        self.export_button.setStyleSheet(_header_btn_style)
+
+        self.mail_btn = QPushButton("Mail Gönder")
+        self.mail_btn.setStyleSheet(_header_btn_style)
+
+        self.last_load_label = QLabel("Son Yukleme: -")
+        self.last_load_label.setStyleSheet(INFO_LABEL_STYLE)
+
+        header_layout.addWidget(self.refresh_button)
+        header_layout.addWidget(self.export_button)
+        header_layout.addWidget(self.mail_btn)
+        header_layout.addStretch()
+        header_layout.addWidget(self.last_load_label)
+
+        header_widget = QWidget()
+        header_widget.setLayout(header_layout)
+        return header_widget
+
+    def _create_filter_bar(self) -> QWidget:
+        filter_layout = QHBoxLayout()
+        filter_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.btn_select_all = QPushButton("Hepsi")
+        self.btn_select_all.setCheckable(True)
+        self.btn_select_all.setStyleSheet(_toggle_btn_style('#6366f1', False))
+
+        self.filter_search = QLineEdit()
+        self.filter_search.setPlaceholderText(u"Ara (t\u00fcm s\u00fctunlarda)")
+        self.filter_search.setStyleSheet(FILTER_INPUT_STYLE)
+
+        self.filter_kalem = QLineEdit()
+        self.filter_kalem.setPlaceholderText("Kalem No")
+        self.filter_kalem.setStyleSheet(FILTER_INPUT_STYLE)
+
+        # Dogtas API tarih araligi - varsayilan: 7 gun once - bugun
+        default_start = (datetime.now() - timedelta(days=7)).strftime('%d.%m.%Y')
+        default_end = datetime.now().strftime('%d.%m.%Y')
+
+        self.filter_tarih_start = QLineEdit()
+        self.filter_tarih_start.setPlaceholderText("Bas. Tarih (GG.AA.YYYY)")
+        self.filter_tarih_start.setText(default_start)
+        self.filter_tarih_start.setStyleSheet(FILTER_INPUT_STYLE)
+        self.filter_tarih_start.setMaximumWidth(150)
+
+        self.filter_tarih_end = QLineEdit()
+        self.filter_tarih_end.setPlaceholderText("Bit. Tarih (GG.AA.YYYY)")
+        self.filter_tarih_end.setText(default_end)
+        self.filter_tarih_end.setStyleSheet(FILTER_INPUT_STYLE)
+        self.filter_tarih_end.setMaximumWidth(150)
+
+        # Depo Yeri Plaka filtresi: 002/2=Biga, 200=Inegol
+        self.btn_biga = QPushButton(u"B\u0130GA")
+        self.btn_biga.setCheckable(True)
+        self.btn_biga.setStyleSheet(_toggle_btn_style('#f97316', False))
+
+        self.btn_inegol = QPushButton(u"\u0130NEGO\u0308L")
+        self.btn_inegol.setCheckable(True)
+        self.btn_inegol.setStyleSheet(_toggle_btn_style('#8b5cf6', False))
+
+        self.filter_clear_btn = QPushButton("Temizle")
+        self.filter_clear_btn.setStyleSheet(BUTTON_STYLE)
+
+        filter_layout.addWidget(self.btn_select_all)
+        filter_layout.addWidget(self.filter_search)
+        filter_layout.addWidget(self.filter_kalem)
+        filter_layout.addWidget(self.filter_tarih_start)
+        filter_layout.addWidget(self.filter_tarih_end)
+        filter_layout.addWidget(self.btn_biga)
+        filter_layout.addWidget(self.btn_inegol)
+        filter_layout.addWidget(self.filter_clear_btn)
+
+        filter_widget = QWidget()
+        filter_widget.setLayout(filter_layout)
+        return filter_widget
+
+    def setup_connections(self):
+        self.refresh_button.clicked.connect(self.load_data)
+        self.export_button.clicked.connect(self.export_to_excel)
+        self.mail_btn.clicked.connect(self._send_mail)
+        self.btn_select_all.clicked.connect(self._select_all_rows)
+        self.filter_clear_btn.clicked.connect(self._clear_filters)
+
+        self.filter_timer = QTimer()
+        self.filter_timer.setSingleShot(True)
+        self.filter_timer.timeout.connect(self.apply_filters)
+
+        for f in [self.filter_search, self.filter_kalem]:
+            f.textChanged.connect(self._schedule_filter)
+
+        self.btn_biga.clicked.connect(self._on_toggle_btn)
+        self.btn_inegol.clicked.connect(self._on_toggle_btn)
+
+    def _schedule_filter(self):
+        self.filter_timer.start(300)
+
+    def _on_toggle_btn(self):
+        btn = self.sender()
+        color_map = {
+            self.btn_biga: '#f97316',
+            self.btn_inegol: '#8b5cf6',
+        }
+        color = color_map.get(btn, '#666')
+        btn.setStyleSheet(_toggle_btn_style(color, btn.isChecked()))
+        # BİGA / İNEGÖL birbirini devre dışı bırakır
+        if btn is self.btn_biga and btn.isChecked():
+            self.btn_inegol.setChecked(False)
+            self.btn_inegol.setStyleSheet(_toggle_btn_style('#8b5cf6', False))
+        elif btn is self.btn_inegol and btn.isChecked():
+            self.btn_biga.setChecked(False)
+            self.btn_biga.setStyleSheet(_toggle_btn_style('#f97316', False))
+        self._schedule_filter()
+
+    def _select_all_rows(self):
+        """Toggle: aktifse tüm checkable satırları seç, değilse seçimi kaldır."""
+        checked = self.btn_select_all.isChecked()
+        self.btn_select_all.setStyleSheet(_toggle_btn_style('#6366f1', checked))
+        state = Qt.Checked if checked else Qt.Unchecked
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item and (item.flags() & Qt.ItemIsUserCheckable):
+                item.setCheckState(state)
+
+    def _clear_filters(self):
+        for f in [self.filter_search, self.filter_kalem]:
+            f.clear()
+        for btn, color in [(self.btn_biga, '#f97316'),
+                           (self.btn_inegol, '#8b5cf6'),
+                           (self.btn_select_all, '#6366f1')]:
+            btn.setChecked(False)
+            btn.setStyleSheet(_toggle_btn_style(color, False))
+        self.apply_filters()
+
+    def load_data(self):
+        if not self.dogtas_client:
+            self.status_label.setText(
+                u"Dogtas API ayarlari eksik (base_url ve nakliye endpoint gerekli)"
+            )
+            return
+        date_start = self.filter_tarih_start.text().strip() or \
+            (datetime.now() - timedelta(days=7)).strftime('%d.%m.%Y')
+        date_end = self.filter_tarih_end.text().strip() or \
+            datetime.now().strftime('%d.%m.%Y')
+        self.status_label.setText(
+            u"PRGsheet 'Bekleyenler' ve Dogtas nakliye verileri y\u00fckleniyor..."
+        )
+        self.refresh_button.setEnabled(False)
+        self._load_thread = FabrikaNakliyeLoadDataThread(
+            self.dogtas_client, date_start, date_end
+        )
+        self._load_thread.data_loaded.connect(self._on_data_loaded)
+        self._load_thread.error_occurred.connect(self._on_load_error)
+        self._load_thread.status_update.connect(self.status_label.setText)
+        self._load_thread.start()
+
+    def _on_data_loaded(self, rows, column_names, nakliye_map):
+        self.all_data = rows
+        self.column_names = column_names
+        self.nakliye_map = nakliye_map
+        # "Kalem No" sutununu bul
+        self.kalem_no_col = next(
+            (c for c in column_names if 'kalem' in c.lower() and 'no' in c.lower()), None
+        )
+        if self.kalem_no_col is None:
+            self.kalem_no_col = next(
+                (c for c in column_names if 'kalem' in c.lower()), None
+            )
+        self.apply_filters()
+        matched = sum(1 for r in rows if self._get_kalem_no(r) in nakliye_map)
+        self.status_label.setText(
+            f"{len(rows)} 'Sevke Hazir' kayit \u2014 {matched} nakliyede eslesti"
+        )
+        self.refresh_button.setEnabled(True)
+        self.last_load_label.setText(
+            f"Son Yukleme: {datetime.now().strftime('%H:%M:%S')}"
+        )
+
+    def _on_load_error(self, error_msg):
+        self.status_label.setText(f"Yukleme hatasi: {error_msg}")
+        self.log(f"HATA: {error_msg}")
+        self.refresh_button.setEnabled(True)
+
+    def _get_kalem_no(self, row):
+        if self.kalem_no_col:
+            return str(row.get(self.kalem_no_col, '') or '').strip()
+        return ''
+
+    @staticmethod
+    def _depo_norm(val: str) -> str:
+        """Depo Yeri Plaka degerini karsilastirma icin normalize et (bas sifirlari kaldir)."""
+        return str(val or '').strip().lstrip('0') or '0'
+
+    def apply_filters(self):
+        filtered = self.all_data[:]
+
+        search_text = self.filter_search.text().strip()
+        kalem_text = self.filter_kalem.text().strip()
+
+        if search_text:
+            filtered = [r for r in filtered
+                        if any(_fuzzy_match(search_text, str(v)) for v in r.values())]
+        if kalem_text:
+            filtered = [r for r in filtered
+                        if kalem_text.lower() in self._get_kalem_no(r).lower()]
+
+        # Depo Yeri Plaka filtresi: Biga=002/2, Inegol=200
+        want_biga = self.btn_biga.isChecked()
+        want_inegol = self.btn_inegol.isChecked()
+        if want_biga or want_inegol:
+            result = []
+            for r in filtered:
+                norm = self._depo_norm(r.get(u'Depo Yeri Plaka', ''))
+                if want_biga and norm == '2':
+                    result.append(r)
+                elif want_inegol and norm == '200':
+                    result.append(r)
+            filtered = result
+
+        # Siralama: Eklenmedi (nakliyede olmayan) once, sonra eski tarih once
+        def _sort_key(r):
+            has_nakliye = self._get_kalem_no(r) in self.nakliye_map
+            tarih = str(r.get(u'Sipari\u015f Tarihi', '') or '').strip()
+            for sep in (' ', 'T'):
+                if sep in tarih:
+                    tarih = tarih.split(sep)[0]
+                    break
+            return (1 if has_nakliye else 0, tarih)
+
+        filtered.sort(key=_sort_key)
+
+        self.filtered_data = filtered
+        self.populate_table()
+
+    # Once gosterilecek sabit sutunlar (siraya gore)
+    _FIXED_ORDER = [
+        u'Sipari\u015f Tarihi',
+        u'Prosap S\u00f6zle\u015fme Ad Soyad',
+        u'\u00dcr\u00fcn Ad\u0131',
+        u'Bekleyen Adet',
+    ]
+    # Hic gosterilmeyecek sutunlar
+    _HIDDEN_COLS = {u'Teslimat Tarihi', u'Spec Ad\u0131', u'KDV(%)'}
+
+    @staticmethod
+    def _format_date(val: str) -> str:
+        """Tarih degerinden saat kismini kaldir."""
+        s = str(val or '').strip()
+        for sep in (' ', 'T'):
+            if sep in s:
+                s = s.split(sep)[0]
+                break
+        return s
+
+    def _build_active_cols(self):
+        """
+        Gosterilecek sutun listesini olustur:
+        1. Siparis Tarihi (varsa)
+        2. Nakliye Durumu (hesaplanan, her zaman)
+        3. Diger sabit sutunlar (varsa)
+        4. Kalan sheet sutunlari (_FIXED_ORDER ve _HIDDEN_COLS disindakiler)
+        Her eleman: (sheet_col_or_None, header_str)
+        """
+        fixed_set = set(self._FIXED_ORDER)
+        result = []
+
+        # 1. Siparis Tarihi
+        if u'Sipari\u015f Tarihi' in self.column_names:
+            result.append((u'Sipari\u015f Tarihi', u'Sipari\u015f Tarihi'))
+
+        # 2. Nakliye Durumu — hesaplanan
+        result.append((None, u'Nakliye Durumu'))
+
+        # 3. Diger sabit sutunlar (Siparis Tarihi haric)
+        for col in self._FIXED_ORDER[1:]:
+            if col in self.column_names:
+                result.append((col, col))
+
+        # 4. Kalan sheet sutunlari (sabit veya gizli olmayanlar)
+        for col in self.column_names:
+            if col not in fixed_set and col not in self._HIDDEN_COLS:
+                result.append((col, col))
+
+        return result
+
+    def populate_table(self):
+        if not self.column_names:
+            return
+
+        active_cols = self._build_active_cols()
+        today = datetime.now().date()
+        depo_filtre_aktif = self.btn_biga.isChecked() or self.btn_inegol.isChecked()
+
+        self.table.setUpdatesEnabled(False)
+        self.table.setSortingEnabled(False)
+        try:
+            self.table.setRowCount(len(self.filtered_data))
+            # +1: ilk sutun checkbox
+            self.table.setColumnCount(len(active_cols) + 1)
+            self.table.setHorizontalHeaderLabels([u""] + [h for (_, h) in active_cols])
+
+            for i, row_data in enumerate(self.filtered_data):
+                kalem_no = self._get_kalem_no(row_data)
+                nakliye_records = self.nakliye_map.get(kalem_no, [])
+                has_nakliye = bool(nakliye_records)
+
+                # Sutun 0: "Eklenmedi" satirlara checkbox; nakliyesi olan satirlara koyma
+                chk_item = QTableWidgetItem()
+                if not has_nakliye:
+                    chk_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                    # Depo filtresi aktifse ve tarih 27 gundan eskiyse otomatik isaretli
+                    auto_check = False
+                    if depo_filtre_aktif:
+                        tarih_str = self._format_date(str(row_data.get('Sipariş Tarihi', '') or ''))
+                        if tarih_str:
+                            try:
+                                row_date = datetime.strptime(tarih_str, '%Y-%m-%d').date()
+                                auto_check = (today - row_date).days > 27
+                            except Exception:
+                                pass
+                    chk_item.setCheckState(Qt.Checked if auto_check else Qt.Unchecked)
+                else:
+                    chk_item.setFlags(Qt.ItemIsEnabled)  # nakliyeli satir, checkbox yok
+                self.table.setItem(i, 0, chk_item)
+
+                for j, (sheet_col, _) in enumerate(active_cols):
+                    font = QFont(FONT_FAMILY, FONT_SIZE)
+                    font.setBold(True)
+
+                    if sheet_col is None:
+                        # Nakliye Durumu
+                        if has_nakliye:
+                            nakliye_nos = list(dict.fromkeys(
+                                str(r.get('nakliye_no', '')) for r in nakliye_records
+                                if r.get('nakliye_no')
+                            ))
+                            nos_str = ', '.join(nakliye_nos[:3])
+                            if len(nakliye_nos) > 3:
+                                nos_str += f' +{len(nakliye_nos) - 3}'
+                            text = u'\u2705 ' + nos_str
+                            cell_color = QColor('#dcfce7')
+                        else:
+                            text = u'Eklenmedi'
+                            cell_color = QColor('#fef9c3')
+                        item = QTableWidgetItem(text)
+                        item.setBackground(QBrush(cell_color))
+                    else:
+                        raw = str(row_data.get(sheet_col, '') or '')
+                        if sheet_col == u'Sipari\u015f Tarihi':
+                            raw = self._format_date(raw)
+                        item = QTableWidgetItem(raw)
+
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    item.setFont(font)
+                    self.table.setItem(i, j + 1, item)  # +1 checkbox offset
+
+                self.table.setRowHeight(i, ROW_HEIGHT)
+
+            header = self.table.horizontalHeader()
+            header.setMinimumSectionSize(80)
+            header.setSectionResizeMode(QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(0, QHeaderView.Fixed)
+            self.table.setColumnWidth(0, 17)
+
+        finally:
+            self.table.setUpdatesEnabled(True)
+            # setSortingEnabled(True) kasitli kullanilmiyor:
+            # header tiklamayla apply_filters siralamasi ezilmesin
+
+    def export_to_excel(self):
+        if not self.filtered_data:
+            self.status_label.setText(u"D\u0131\u015far\u0131 aktar\u0131lacak veri yok")
+            return
+        try:
+            active_cols = self._build_active_cols()
+            rows_for_export = []
+            for row_data in self.filtered_data:
+                kalem_no = self._get_kalem_no(row_data)
+                nakliye_records = self.nakliye_map.get(kalem_no, [])
+                export_row = {}
+                for sheet_col, header in active_cols:
+                    if sheet_col is None:
+                        export_row[header] = ', '.join(
+                            str(r.get('nakliye_no', '')) for r in nakliye_records[:3]
+                            if r.get('nakliye_no')
+                        ) if nakliye_records else 'Eklenmedi'
+                    elif sheet_col == u'Sipari\u015f Tarihi':
+                        export_row[header] = self._format_date(row_data.get(sheet_col, ''))
+                    else:
+                        export_row[header] = str(row_data.get(sheet_col, '') or '')
+                rows_for_export.append(export_row)
+            col_order = [h for (_, h) in active_cols]
+            df = pd.DataFrame(rows_for_export, columns=col_order)
+            output_path = "D:/GoogleDrive/~ FabrikaNakliye_Export.xlsx"
+            df.to_excel(output_path, index=False, engine='openpyxl')
+            self.status_label.setText(f"Excel export: {output_path}")
+            self.log(f"Veriler disari aktarildi: {output_path}")
+        except Exception as e:
+            self.status_label.setText(f"Export hatasi: {e}")
+            self.log(f"HATA: Export hatasi: {e}")
+
+    def show_context_menu(self, pos):
+        menu = QMenu(self.table)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #a0a0a0;
+                padding: 4px 0px;
+            }
+            QMenu::item {
+                padding: 6px 24px;
+                color: #000000;
+                font-size: 14px;
+            }
+            QMenu::item:selected {
+                background-color: #3399ff;
+                color: #ffffff;
+            }
+        """)
+        hucre_action = QAction("Kopyala", self)
+        hucre_action.triggered.connect(lambda: self.copy_cell(pos))
+        menu.addAction(hucre_action)
+        menu.exec_(self.table.viewport().mapToGlobal(pos))
+
+    def copy_cell(self, pos):
+        item = self.table.itemAt(pos)
+        if item:
+            QApplication.clipboard().setText(item.text())
+            old_text = self.status_label.text()
+            self.status_label.setText(u'\u2705 Kopyaland\u0131')
+            QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
+
+    def handle_ctrl_c(self):
+        selected_items = self.table.selectedItems()
+        if not selected_items:
+            return
+        if len(selected_items) == 1:
+            QApplication.clipboard().setText(selected_items[0].text())
+        else:
+            rows = sorted({item.row() for item in selected_items})
+            cols = sorted({item.column() for item in selected_items})
+            text_data = ""
+            for r in rows:
+                row_items = []
+                for c in cols:
+                    item = self.table.item(r, c)
+                    if item and item.isSelected():
+                        row_items.append(item.text())
+                if row_items:
+                    text_data += "\t".join(row_items) + "\n"
+            if text_data:
+                QApplication.clipboard().setText(text_data.strip())
+        old_text = self.status_label.text()
+        self.status_label.setText(u'\u2705 Kopyaland\u0131')
+        QTimer.singleShot(1500, lambda t=old_text: self.status_label.setText(t))
+
+    def _msgbox(self, kind, title, text, buttons=None):
+        """Okunabilir (beyaz zemin, siyah yazi) QMessageBox gosterir."""
+        box = QMessageBox(self)
+        box.setStyleSheet(
+            "QMessageBox { background-color: #ffffff; }"
+            "QMessageBox QLabel { color: #000000; font-size: 13px; }"
+            "QMessageBox QPushButton { color: #000000; background-color: #f3f4f6;"
+            " border: 1px solid #d1d5db; border-radius: 4px;"
+            " padding: 4px 12px; min-width: 60px; }"
+            "QMessageBox QPushButton:hover { background-color: #e5e7eb; }"
+        )
+        box.setWindowTitle(title)
+        box.setText(text)
+        icon_map = {
+            'info': QMessageBox.Information,
+            'warning': QMessageBox.Warning,
+            'critical': QMessageBox.Critical,
+            'question': QMessageBox.Question,
+        }
+        box.setIcon(icon_map.get(kind, QMessageBox.NoIcon))
+        if buttons:
+            box.setStandardButtons(buttons)
+            box.setDefaultButton(QMessageBox.No)
+        return box.exec_()
+
+    @staticmethod
+    def _format_kalem_no(kalem: str) -> str:
+        """'1102678987000410' -> '1102678987-410' (ilk 10 karakter + '-' + kalan bas sifirlar silinmis)"""
+        s = str(kalem or '').strip()
+        if 'E+' in s or 'e+' in s:
+            try:
+                s = str(int(float(s)))
+            except Exception:
+                pass
+        if len(s) > 10:
+            return s[:10] + '-' + s[10:].lstrip('0')
+        return s
+
+    def _send_mail(self):
+        """Filtrelenmiş 'Eklenmedi' satırlarını BİGA veya İNEGÖL için mail olarak gönderir."""
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        from email.header import Header
+        from io import BytesIO
+
+        # Hangi depo secili?
+        if self.btn_biga.isChecked():
+            depo = "BİGA"
+        elif self.btn_inegol.isChecked():
+            depo = "İNEGÖL"
+        else:
+            self._msgbox('warning', "Depo Seçilmedi",
+                         "Lütfen önce BİGA veya İNEGÖL butonuna tıklayın.")
+            return
+
+        # Secili (checkbox isaretli) satirlari al
+        selected_rows = []
+        for i in range(self.table.rowCount()):
+            chk = self.table.item(i, 0)
+            if chk and chk.checkState() == Qt.Checked and i < len(self.filtered_data):
+                selected_rows.append(self.filtered_data[i])
+        eklenmedi_rows = selected_rows
+        if not eklenmedi_rows:
+            self._msgbox('info', "Satır Seçilmedi",
+                         "Lütfen göndermek istediğiniz satırları işaretleyin.")
+            return
+
+        # Mail ayarlarini PRGsheet "Mail" sayfasindan yukle
+        try:
+            config_manager = CentralConfigManager()
+            sid = config_manager.MASTER_SPREADSHEET_ID
+            url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=xlsx"
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            mail_df = pd.read_excel(BytesIO(resp.content), sheet_name="Mail")
+            mail_sevk_df = mail_df[mail_df['fonksiyon'] == 'mail_sevk_gonder']
+            if mail_sevk_df.empty:
+                self._msgbox('warning', "Mail Ayarı Bulunamadı",
+                             "PRGsheet 'Mail' sayfasında 'mail_sevk_gonder' satırı bulunamadı.")
+                return
+            mail_info = mail_sevk_df.iloc[0]
+            sender_email = str(mail_info["sender_email"])
+            receiver_email = str(mail_info["receiver_email"])
+            cc_email = str(mail_info["cc_email"]) if pd.notna(mail_info.get("cc_email")) else ""
+            bcc_email = str(mail_info["bcc_email"]) if pd.notna(mail_info.get("bcc_email")) else ""
+            password = str(mail_info["password"])
+            smtp_server = str(mail_info["smtp_server"])
+        except Exception as e:
+            self._msgbox('critical', "Mail Ayarı Hatası", f"Mail ayarları yüklenemedi: {e}")
+            return
+
+        # Mail kolonlari
+        mail_cols = [
+            'Sipariş Tarihi', 'Kalem No', 'Ürün Adı',
+            'Spec Adı', 'Bekleyen Adet', 'Durum',
+            'Teslimat Tarihi', 'Depo Yeri Plaka', 'Teslim Deposu',
+        ]
+
+        # Tablo satirlarini olustur
+        table_rows = []
+        for r in eklenmedi_rows:
+            row = {}
+            for col in mail_cols:
+                val = str(r.get(col, '') or '')
+                if col == 'Sipariş Tarihi':
+                    val = self._format_date(val)
+                elif col == 'Kalem No':
+                    val = self._format_kalem_no(val)
+                row[col] = val
+            table_rows.append(row)
+
+        df_mail = pd.DataFrame(table_rows, columns=mail_cols)
+        html_table = df_mail.to_html(index=False, border=1)
+
+        subject = f"{depo} BAYİ SEVK"
+        body = f"""
+        <p>Merhaba,</p>
+        <p>Ekteki ürünler sevkiyat planına dahil edilmemiştir. Plana alınması için destek rica ederim.</p>
+        {html_table}
+        <p>İyi çalışmalar diliyorum.</p>
+        """
+
+        msg = MIMEMultipart()
+        msg["From"] = str(Header(sender_email, "utf-8"))
+        msg["To"] = str(Header(receiver_email, "utf-8"))
+        if cc_email:
+            msg["Cc"] = str(Header(cc_email, "utf-8"))
+        msg["Subject"] = str(Header(subject, "utf-8"))
+        msg.attach(MIMEText(body, "html", "utf-8"))
+
+        to_addrs = [receiver_email]
+        if cc_email:
+            to_addrs.append(cc_email)
+        if bcc_email:
+            to_addrs.append(bcc_email)
+
+        reply = self._msgbox(
+            'question', "E-posta Gönderimi",
+            f"{depo} deposu için {len(eklenmedi_rows)} satır gönderilecek.\n"
+            f"Alıcı: {receiver_email}\n\nEmin misiniz?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            with smtplib.SMTP(smtp_server, 587) as server:
+                server.starttls()
+                server.login(sender_email, password)
+                server.sendmail(sender_email, to_addrs, msg.as_string())
+            self._msgbox('info', "E-posta Gönderildi",
+                         f"E-posta başarıyla gönderildi.\nKime: {receiver_email}")
+            self.status_label.setText("✅ Sevk e-postası başarıyla gönderildi")
+            self.log(f"Mail gonderildi: {subject} -> {receiver_email}")
+        except Exception as e:
+            self._msgbox('critical', "E-posta Gönderme Hatası",
+                         f"E-posta gönderilemedi: {e}")
+            self.status_label.setText(f"❌ Mail gönderme hatası: {e}")
+            self.log(f"HATA: Mail gonderilemedi: {e}")
+
+    def log(self, message: str):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_text.append(f"[{timestamp}] {message}")
         doc = self.log_text.document()
         if doc.blockCount() > 100:
             cursor = self.log_text.textCursor()
@@ -6863,6 +7711,8 @@ class BarkodApp(QWidget):
         # Sekmeler
         self.satis_tab = SatisTeslimatWidget()
         self.tab_widget.addTab(self.satis_tab, u"Sat\u0131\u015f / Teslimat Fi\u015fi")
+        self.fabrika_nakliye_tab = FabrikaNakliyePlanWidget()
+        self.tab_widget.addTab(self.fabrika_nakliye_tab, u"Fabrika Nakliye Plan\u0131")
         self.nakliye_tab = NakliyeYuklemeWidget()
         self.tab_widget.addTab(self.nakliye_tab, u"Nakliye Y\u00fckleme")
         self.sevk_tab = SevkFisiWidget()
