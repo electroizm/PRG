@@ -6,6 +6,8 @@ import os
 import re
 import logging
 import sys
+import urllib.parse
+import webbrowser
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
 import pandas as pd
@@ -644,6 +646,32 @@ class SshModule(QMainWindow):
         self.mikro_button.clicked.connect(self.run_mikro_ssh)
         control_layout.addWidget(self.mikro_button)
 
+        # Seçilileri Sil butonu
+        self.delete_selected_btn = QPushButton("🗑️ Seçilileri Sil")
+        self.delete_selected_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dfdfdf;
+                color: black;
+                border: 1px solid #444;
+                padding: 8px 15px;
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #a0a5a2;
+            }
+            QPushButton:pressed {
+                background-color: #909090;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+            }
+        """)
+        self.delete_selected_btn.clicked.connect(self.delete_selected_ssh_rows)
+        control_layout.addWidget(self.delete_selected_btn)
+
         # Montaj Belgesi Yükle butonu
         self.montaj_yukle_btn = QPushButton("📤 Montaj Belgesi Yükle")
         self.montaj_yukle_btn.setStyleSheet("""
@@ -970,14 +998,14 @@ class SshModule(QMainWindow):
         all_fatr = True
 
         for row in range(self.table.rowCount()):
-            checkbox_widget = self.table.cellWidget(row, 0)
+            checkbox_widget = self.table.cellWidget(row, 1)
             if checkbox_widget:
                 checkbox = checkbox_widget.findChild(QCheckBox)
                 if checkbox and checkbox.isChecked():
                     has_checked = True
 
-                    # Parça Durumu sütununu kontrol et (index 1)
-                    parca_durumu_item = self.table.item(row, 1)
+                    # Parça Durumu sütununu kontrol et (index 2)
+                    parca_durumu_item = self.table.item(row, 2)
                     if parca_durumu_item:
                         parca_durumu = parca_durumu_item.text().strip().upper()
                         if "FATR" not in parca_durumu:
@@ -1001,7 +1029,7 @@ class SshModule(QMainWindow):
         selected_rows_data = []
 
         for row in range(self.table.rowCount()):
-            checkbox_widget = self.table.cellWidget(row, 0)
+            checkbox_widget = self.table.cellWidget(row, 1)
             if checkbox_widget:
                 checkbox = checkbox_widget.findChild(QCheckBox)
                 if checkbox and checkbox.isChecked():
@@ -1010,7 +1038,7 @@ class SshModule(QMainWindow):
                     row_data = {}
 
                     # Sözleşme Numarası ve Müşteri Adı sütunlarını bul
-                    for col in range(2, self.table.columnCount()):
+                    for col in range(3, self.table.columnCount()):
                         header = self.table.horizontalHeaderItem(col)
                         if header:
                             header_text = header.text()
@@ -1184,7 +1212,7 @@ class SshModule(QMainWindow):
         checked_count = 0
 
         for row in range(self.table.rowCount()):
-            checkbox_widget = self.table.cellWidget(row, 0)
+            checkbox_widget = self.table.cellWidget(row, 1)
             if checkbox_widget:
                 checkbox = checkbox_widget.findChild(QCheckBox)
                 if checkbox and checkbox.isChecked():
@@ -1193,7 +1221,7 @@ class SshModule(QMainWindow):
                     siparis_no = None
                     montaj_tarihi = None
 
-                    for col in range(2, self.table.columnCount()):  # 2'den başla (Seç ve Parça Durumu atla)
+                    for col in range(3, self.table.columnCount()):  # 3'den başla (Sil, Seç ve Parça Durumu atla)
                         header = self.table.horizontalHeaderItem(col)
                         if header:
                             header_text = header.text()
@@ -1201,7 +1229,7 @@ class SshModule(QMainWindow):
                             if item:
                                 if "Yedek Parça Sipariş No" in header_text:
                                     siparis_no = item.text().strip()
-                                elif "Montaj Belgesi Tarihi" in header_text:
+                                elif "Montaj Tarihi" in header_text:
                                     montaj_tarihi = item.text().strip()
 
                     if siparis_no and montaj_tarihi:
@@ -1310,13 +1338,13 @@ class SshModule(QMainWindow):
                 # Tabloda ilgili satırı bul ve güncelle
                 for row in range(self.table.rowCount()):
                     # Yedek Parça Sipariş No sütununu bul
-                    for col in range(2, self.table.columnCount()):  # 2'den başla (Seç ve Parça Durumu atla)
+                    for col in range(3, self.table.columnCount()):  # 3'den başla (Sil, Seç ve Parça Durumu atla)
                         header = self.table.horizontalHeaderItem(col)
                         if header and "Yedek Parça Sipariş No" in header.text():
                             item = self.table.item(row, col)
                             if item and item.text().strip() == str(siparis_no).strip():
-                                # Parça Durumu sütununu güncelle (index 1)
-                                parca_durumu_item = self.table.item(row, 1)
+                                # Parça Durumu sütununu güncelle (index 2)
+                                parca_durumu_item = self.table.item(row, 2)
                                 if parca_durumu_item:
                                     parca_durumu_item.setText(order_status)
                                 else:
@@ -1324,7 +1352,7 @@ class SshModule(QMainWindow):
                                     font = QFont("Segoe UI", 12)
                                     font.setBold(True)
                                     new_item.setFont(font)
-                                    self.table.setItem(row, 1, new_item)
+                                    self.table.setItem(row, 2, new_item)
                                 break
 
             self.status_label.setText(f"✅ {len(results)} parça durumu güncellendi")
@@ -1354,6 +1382,87 @@ class SshModule(QMainWindow):
         self.data_loader.finished.connect(self.on_loading_finished)
         self.data_loader.progress_updated.connect(self.on_progress_updated)
         self.data_loader.start()
+
+    def delete_selected_ssh_rows(self):
+        """Sil sütununda işaretli satırları Google Sheets'ten siler"""
+        # Sil checkbox'ı işaretli satırların Yedek Parça Sipariş No değerlerini topla
+        siparis_no_list = []
+        siparis_no_col = None
+
+        # Yedek Parça Sipariş No sütun indeksini bul
+        for col in range(3, self.table.columnCount()):
+            header = self.table.horizontalHeaderItem(col)
+            if header and "Yedek Parça Sipariş No" in header.text():
+                siparis_no_col = col
+                break
+
+        for row in range(self.table.rowCount()):
+            sil_widget = self.table.cellWidget(row, 0)
+            if sil_widget:
+                sil_checkbox = sil_widget.findChild(QCheckBox)
+                if sil_checkbox and sil_checkbox.isChecked():
+                    if siparis_no_col is not None:
+                        item = self.table.item(row, siparis_no_col)
+                        if item and item.text().strip():
+                            siparis_no_list.append(item.text().strip())
+
+        if not siparis_no_list:
+            QMessageBox.information(self, "Bilgi", "Silinecek satır seçilmedi.\n\n'Sil' sütunundaki kutucukları işaretleyin.")
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Onay",
+            f"{len(siparis_no_list)} satır Google Sheets'ten kalıcı olarak silinecek.\n\nDevam etmek istiyor musunuz?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            self.status_label.setText("🗑️ Satırlar siliniyor...")
+            QApplication.processEvents()
+
+            config_manager = CentralConfigManager()
+            spreadsheet = config_manager.gc.open("PRGsheet")
+            worksheet = spreadsheet.worksheet("Ssh")
+
+            # Başlık satırını al ve Yedek Parça Sipariş No sütun indeksini bul
+            all_values = worksheet.get_all_values()
+            if not all_values:
+                QMessageBox.warning(self, "Uyarı", "Google Sheets sayfası boş.")
+                return
+
+            headers = all_values[0]
+            try:
+                col_idx = headers.index("Yedek Parça Sipariş No")
+            except ValueError:
+                QMessageBox.critical(self, "Hata", "'Yedek Parça Sipariş No' sütunu Google Sheets'te bulunamadı.")
+                return
+
+            # Silinecek satır indekslerini bul (aşağıdan yukarıya sil)
+            rows_to_delete = []
+            for row_idx, row in enumerate(all_values[1:], start=2):  # 1-indexed, başlık satırı 1
+                cell_val = row[col_idx].strip() if col_idx < len(row) else ""
+                if cell_val in siparis_no_list:
+                    rows_to_delete.append(row_idx)
+
+            if not rows_to_delete:
+                QMessageBox.information(self, "Bilgi", "Seçili sipariş numaraları Google Sheets'te bulunamadı.")
+                return
+
+            # Aşağıdan yukarıya sil (indeks kaymasını önlemek için)
+            for row_idx in sorted(rows_to_delete, reverse=True):
+                worksheet.delete_rows(row_idx)
+
+            self.status_label.setText(f"✅ {len(rows_to_delete)} satır silindi. Veriler yenileniyor...")
+            QApplication.processEvents()
+            self.refresh_data()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Hata", f"Silme işlemi başarısız:\n{str(e)}")
+            self.status_label.setText("❌ Silme hatası")
 
     def on_progress_updated(self, progress, message):
         """Progress güncellemesi"""
@@ -1465,16 +1574,40 @@ class SshModule(QMainWindow):
                 if header not in original_headers:
                     original_headers.append(header)
 
-            headers = ["Seç", "Parça Durumu"] + original_headers  # Checkbox ve Parça Durumu sütunları
+            headers = ["Sil", "Seç", "Parça Durumu"] + original_headers  # Sil, Checkbox ve Parça Durumu sütunları
+
+            # Görüntülenen başlık adları (veri anahtarları değişmez)
+            _header_display = {"Montaj Belgesi Tarihi": "Montaj Tarihi", "Yedek Parça Ürün Miktarı": "Adet"}
+            display_headers = [_header_display.get(h, h) for h in headers]
 
             # Tablo boyutlarını ayarla
             self.table.setRowCount(len(self.filtered_data))
             self.table.setColumnCount(len(headers))
-            self.table.setHorizontalHeaderLabels(headers)
+            self.table.setHorizontalHeaderLabels(display_headers)
 
             # Verileri tabloya ekle
             for row_idx, row_data in enumerate(self.filtered_data):
-                # İlk sütuna checkbox ekle
+                # İlk sütuna Sil checkbox ekle (varsayılan: işaretsiz)
+                sil_widget = QWidget()
+                sil_layout = QHBoxLayout(sil_widget)
+                sil_layout.setContentsMargins(0, 0, 0, 0)
+                sil_layout.setAlignment(Qt.AlignCenter)
+                sil_checkbox = QCheckBox()
+                sil_checkbox.setChecked(False)
+                sil_checkbox.setStyleSheet("""
+                    QCheckBox {
+                        font-size: 14px;
+                        font-weight: bold;
+                    }
+                    QCheckBox::indicator {
+                        width: 18px;
+                        height: 18px;
+                    }
+                """)
+                sil_layout.addWidget(sil_checkbox)
+                self.table.setCellWidget(row_idx, 0, sil_widget)
+
+                # İkinci sütuna Seç checkbox ekle (varsayılan: işaretli)
                 checkbox_widget = QWidget()
                 checkbox_layout = QHBoxLayout(checkbox_widget)
                 checkbox_layout.setContentsMargins(0, 0, 0, 0)
@@ -1493,19 +1626,30 @@ class SshModule(QMainWindow):
                     }
                 """)
                 checkbox_layout.addWidget(checkbox)
-                self.table.setCellWidget(row_idx, 0, checkbox_widget)
+                self.table.setCellWidget(row_idx, 1, checkbox_widget)
 
-                # Parça Durumu sütunu (index 1)
+                # Parça Durumu sütunu (index 2)
                 parca_durumu = row_data.get("Parça Durumu", "")
                 item = QTableWidgetItem(str(parca_durumu))
                 font = QFont("Segoe UI", 12)
                 font.setBold(True)
                 item.setFont(font)
-                self.table.setItem(row_idx, 1, item)
+                self.table.setItem(row_idx, 2, item)
 
                 # Diğer sütunlara veri ekle
                 for col_idx, header in enumerate(original_headers):
                     value = row_data.get(header, "")
+
+                    # Montaj Belgesi Tarihi sütununda saat bilgisini kaldır
+                    if header == "Montaj Belgesi Tarihi":
+                        try:
+                            if isinstance(value, str) and ' ' in value:
+                                value = value.split(' ')[0]
+                            elif hasattr(value, 'strftime'):
+                                value = value.strftime('%Y-%m-%d')
+                        except Exception:
+                            pass
+
                     item = QTableWidgetItem(str(value))
 
                     # risk_module stili font
@@ -1513,21 +1657,25 @@ class SshModule(QMainWindow):
                     font.setBold(True)
                     item.setFont(font)
 
-                    self.table.setItem(row_idx, col_idx + 2, item)  # +2 çünkü ilk iki sütun checkbox ve Parça Durumu
+                    self.table.setItem(row_idx, col_idx + 3, item)  # +3 çünkü ilk üç sütun Sil, Seç ve Parça Durumu
 
             # Sütun genişliklerini ayarla
             header = self.table.horizontalHeader()
 
-            # Checkbox sütunu için sabit genişlik
+            # Sil checkbox sütunu için sabit genişlik
             header.setSectionResizeMode(0, QHeaderView.Fixed)
             self.table.setColumnWidth(0, 60)
 
-            # Parça Durumu sütunu için sabit genişlik
+            # Seç checkbox sütunu için sabit genişlik
             header.setSectionResizeMode(1, QHeaderView.Fixed)
-            self.table.setColumnWidth(1, 120)
+            self.table.setColumnWidth(1, 60)
+
+            # Parça Durumu sütunu için sabit genişlik
+            header.setSectionResizeMode(2, QHeaderView.Fixed)
+            self.table.setColumnWidth(2, 120)
 
             # Diğer sütunlar için otomatik boyutlandırma
-            for i in range(2, len(headers)):
+            for i in range(3, len(headers)):
                 header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
 
             # Satır yüksekliğini artır (sozlesme_module gibi)
@@ -1637,7 +1785,11 @@ class SshModule(QMainWindow):
                 if header not in original_headers:
                     original_headers.append(header)
 
-            headers = ["Seç", "Parça Durumu"] + original_headers
+            headers = ["Sil", "Seç", "Parça Durumu"] + original_headers
+
+            # Görüntülenen başlık adları (veri anahtarları değişmez)
+            _header_display = {"Montaj Belgesi Tarihi": "Montaj Tarihi", "Yedek Parça Ürün Miktarı": "Adet"}
+            display_headers = [_header_display.get(h, h) for h in headers]
 
             # Tablo boyutunu ayarla
             row_count = len(self.filtered_data)
@@ -1648,18 +1800,23 @@ class SshModule(QMainWindow):
                 self.table.setRowCount(row_count)
             if self.table.columnCount() != col_count:
                 self.table.setColumnCount(col_count)
-                self.table.setHorizontalHeaderLabels(headers)
+                self.table.setHorizontalHeaderLabels(display_headers)
 
                 # Sütun genişliklerini sadece yeni tablo için ayarla
                 header = self.table.horizontalHeader()
+                # Sil checkbox sütunu
                 header.setSectionResizeMode(0, QHeaderView.Fixed)
                 self.table.setColumnWidth(0, 60)
 
-                # Parça Durumu sütunu için sabit genişlik
+                # Seç checkbox sütunu
                 header.setSectionResizeMode(1, QHeaderView.Fixed)
-                self.table.setColumnWidth(1, 120)
+                self.table.setColumnWidth(1, 60)
 
-                for i in range(2, col_count):
+                # Parça Durumu sütunu için sabit genişlik
+                header.setSectionResizeMode(2, QHeaderView.Fixed)
+                self.table.setColumnWidth(2, 120)
+
+                for i in range(3, col_count):
                     header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
 
             # Batch şeklinde veri ekle
@@ -1667,8 +1824,29 @@ class SshModule(QMainWindow):
             widgets_to_set = []
 
             for row_idx, row_data in enumerate(self.filtered_data):
-                # Checkbox widget'ını hazırla
+                # Sil checkbox widget'ını hazırla (col 0, varsayılan: işaretsiz)
                 if not self.table.cellWidget(row_idx, 0):
+                    sil_widget = QWidget()
+                    sil_layout = QHBoxLayout(sil_widget)
+                    sil_layout.setContentsMargins(0, 0, 0, 0)
+                    sil_layout.setAlignment(Qt.AlignCenter)
+                    sil_checkbox = QCheckBox()
+                    sil_checkbox.setChecked(False)
+                    sil_checkbox.setStyleSheet("""
+                        QCheckBox {
+                            font-size: 14px;
+                            font-weight: bold;
+                        }
+                        QCheckBox::indicator {
+                            width: 18px;
+                            height: 18px;
+                        }
+                    """)
+                    sil_layout.addWidget(sil_checkbox)
+                    widgets_to_set.append((row_idx, 0, sil_widget))
+
+                # Seç checkbox widget'ını hazırla (col 1, varsayılan: işaretli)
+                if not self.table.cellWidget(row_idx, 1):
                     checkbox_widget = QWidget()
                     checkbox_layout = QHBoxLayout(checkbox_widget)
                     checkbox_layout.setContentsMargins(0, 0, 0, 0)
@@ -1689,9 +1867,9 @@ class SshModule(QMainWindow):
                     # Checkbox değişiminde Yazdır butonu durumunu kontrol et
                     checkbox.stateChanged.connect(self.check_print_button_state)
                     checkbox_layout.addWidget(checkbox)
-                    widgets_to_set.append((row_idx, 0, checkbox_widget))
+                    widgets_to_set.append((row_idx, 1, checkbox_widget))
 
-                # Parça Durumu sütunu (index 1)
+                # Parça Durumu sütunu (index 2)
                 parca_durumu = row_data.get("Parça Durumu", "")
                 if isinstance(parca_durumu, (int, float)):
                     if isinstance(parca_durumu, float) and parca_durumu.is_integer():
@@ -1703,7 +1881,7 @@ class SshModule(QMainWindow):
                 else:
                     display_value = str(parca_durumu)
 
-                existing_item = self.table.item(row_idx, 1)
+                existing_item = self.table.item(row_idx, 2)
                 if existing_item:
                     existing_item.setText(display_value)
                 else:
@@ -1711,11 +1889,21 @@ class SshModule(QMainWindow):
                     font = QFont("Segoe UI", 12)
                     font.setBold(True)
                     item.setFont(font)
-                    items_to_set.append((row_idx, 1, item))
+                    items_to_set.append((row_idx, 2, item))
 
                 # Veri item'larını hazırla
                 for col_idx, header in enumerate(original_headers):
                     value = row_data.get(header, "")
+
+                    # Montaj Belgesi Tarihi sütununda saat bilgisini kaldır
+                    if header == "Montaj Belgesi Tarihi":
+                        try:
+                            if isinstance(value, str) and ' ' in value:
+                                value = value.split(' ')[0]
+                            elif hasattr(value, 'strftime'):
+                                value = value.strftime('%Y-%m-%d')
+                        except Exception:
+                            pass
 
                     # Sayısal değerlerde .0 ifadesini kaldır
                     if isinstance(value, (int, float)):
@@ -1729,7 +1917,7 @@ class SshModule(QMainWindow):
                     else:
                         display_value = str(value)
 
-                    existing_item = self.table.item(row_idx, col_idx + 2)
+                    existing_item = self.table.item(row_idx, col_idx + 3)
                     if existing_item:
                         existing_item.setText(display_value)
                     else:
@@ -1737,7 +1925,7 @@ class SshModule(QMainWindow):
                         font = QFont("Segoe UI", 12)
                         font.setBold(True)
                         item.setFont(font)
-                        items_to_set.append((row_idx, col_idx + 2, item))
+                        items_to_set.append((row_idx, col_idx + 3, item))
 
             # Batch insert işlemleri
             for widget_data in widgets_to_set:
@@ -2292,6 +2480,32 @@ class SSHPrintDialog(QDialog):
         # Butonlar için yatay layout
         button_layout = QHBoxLayout()
 
+        # WhatsApp - Randevu Al butonu
+        self.btn_whatsapp = QPushButton("WhatsApp - Randevu Al")
+        self.btn_whatsapp.setStyleSheet("""
+            QPushButton {
+                background-color: #dfdfdf;
+                color: black;
+                border: 1px solid #444;
+                padding: 8px 15px;
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #a0a5a2;
+            }
+            QPushButton:pressed {
+                background-color: #909090;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+            }
+        """)
+        self.btn_whatsapp.clicked.connect(self.send_whatsapp_message)
+        button_layout.addWidget(self.btn_whatsapp)
+
         # Yazıcıya Gönder butonu
         self.btn_print = QPushButton("Yazıcıya Gönder")
         self.btn_print.setStyleSheet("""
@@ -2658,6 +2872,53 @@ class SSHPrintDialog(QDialog):
 
         except Exception as e:
             logger.error(f"Parça Durumu güncelleme hatası: {str(e)}")
+
+    def send_whatsapp_message(self):
+        """WhatsApp Web üzerinden müşteriye randevu mesajı gönder"""
+        if not hasattr(self.contract_data, 'ES_CONTRACT_INFO'):
+            QMessageBox.warning(self, "Uyarı", "Müşteri bilgisi bulunamadı.")
+            return
+
+        contract_info = self.contract_data.ES_CONTRACT_INFO
+
+        def safe_get(obj, attr, default=''):
+            try:
+                return getattr(obj, attr, default) if hasattr(obj, attr) else default
+            except Exception:
+                return default
+
+        first_name = safe_get(contract_info, 'CUSTOMER_NAMEFIRST')
+        last_name = safe_get(contract_info, 'CUSTOMER_NAMELAST')
+        customer_name = f"{first_name} {last_name}".strip()
+        phone1 = str(safe_get(contract_info, 'CUSTOMER_PHONE1', '')).strip()
+        phone2 = str(safe_get(contract_info, 'CUSTOMER_PHONE2', '')).strip()
+        city = safe_get(contract_info, 'CUSTOMER_CITY', '')
+
+        # Birden fazla numara varsa ilkini al
+        def parse_phone(phone_str):
+            if ' - ' in phone_str:
+                phone_str = phone_str.split(' - ')[0]
+            # Sadece rakam ve + karakterlerini bırak
+            cleaned = re.sub(r'[^\d+]', '', phone_str)
+            return cleaned
+
+        tel = parse_phone(phone1) if phone1 else parse_phone(phone2)
+        if not tel:
+            QMessageBox.warning(self, "Uyarı", "Müşteri telefon numarası bulunamadı.")
+            return
+
+        msg = (
+            f"Sayın {customer_name},\n\n"
+            f"Doğtaş Teknik Servis olarak sizi aramak istiyoruz.\n"
+            f"Aldığınız ürünlere ait kalan SSH parçalarının montajı ekibimiz tarafından "
+            f"\"YARIN GÜN İÇİNDE\" yapılacaktır. Müsaitlik durumunuz hakkında lütfen bilgi verebilir misiniz?\n\n"
+            f"Evet. Onaylıyorum.\n"
+            f"Hayır. Müsait değilim."
+        )
+
+        encoded_msg = urllib.parse.quote(msg)
+        url = f"https://web.whatsapp.com/send?phone={tel}&text={encoded_msg}"
+        webbrowser.open(url)
 
     def update_to_montor(self):
         """Seçilen kayıtları 'Sorun Çözüldü' olarak günceller"""

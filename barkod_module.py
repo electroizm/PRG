@@ -235,7 +235,7 @@ MIKRO_SQL_QUERY = """
         sth.sth_evrakno_seri,
         sth.sth_evrakno_sira,
         sth.sth_satirno,
-        CONVERT(DATE, sth.sth_tarih) AS tarih,
+        CONVERT(DATE, sth.sth_belge_tarih) AS tarih,
         sth.sth_stok_kod,
         sth.sth_miktar,
         sth.sth_cikis_depo_no,
@@ -256,7 +256,7 @@ MIKRO_SQL_QUERY = """
         ON sto.sto_kod = sth.sth_stok_kod
         AND (sto.sto_pasif_fl IS NULL OR sto.sto_pasif_fl = 0)
     WHERE sth.sth_evraktip = 4
-        AND sth.sth_tarih >= ?
+        AND sth.sth_belge_tarih >= ?
     ORDER BY sth.sth_evrakno_sira DESC
 """
 
@@ -286,7 +286,7 @@ MIKRO_CIKIS_SQL_QUERY = """
     SELECT
         sth.sth_evrakno_seri,
         sth.sth_evrakno_sira,
-        CONVERT(DATE, sth.sth_tarih) AS tarih,
+        CONVERT(DATE, sth.sth_belge_tarih) AS tarih,
         sth.sth_stok_kod,
         sth.sth_miktar,
         sth.sth_cikis_depo_no,
@@ -300,7 +300,7 @@ MIKRO_CIKIS_SQL_QUERY = """
         ON sto.sto_kod = sth.sth_stok_kod
         AND (sto.sto_pasif_fl IS NULL OR sto.sto_pasif_fl = 0)
     WHERE sth.sth_evraktip = 0
-        AND sth.sth_tarih >= ?
+        AND sth.sth_belge_tarih >= ?
     ORDER BY sth.sth_evrakno_sira DESC
 """
 
@@ -308,7 +308,7 @@ MIKRO_GIRIS_SQL_QUERY = """
     SELECT
         sth.sth_evrakno_seri,
         sth.sth_evrakno_sira,
-        CONVERT(DATE, sth.sth_tarih) AS tarih,
+        CONVERT(DATE, sth.sth_belge_tarih) AS tarih,
         sth.sth_stok_kod,
         sth.sth_miktar,
         dbo.fn_StokHarEvrTip(sth.sth_evraktip) AS evrak_adi,
@@ -322,7 +322,7 @@ MIKRO_GIRIS_SQL_QUERY = """
         ON sto.sto_kod = sth.sth_stok_kod
         AND (sto.sto_pasif_fl IS NULL OR sto.sto_pasif_fl = 0)
     WHERE sth.sth_evraktip = 12
-        AND sth.sth_tarih >= ?
+        AND sth.sth_belge_tarih >= ?
     ORDER BY sth.sth_evrakno_sira DESC
 """
 
@@ -330,7 +330,7 @@ MIKRO_SEVK_SQL_QUERY = """
     SELECT
         sth.sth_evrakno_seri,
         sth.sth_evrakno_sira,
-        CONVERT(DATE, sth.sth_tarih) AS tarih,
+        CONVERT(DATE, sth.sth_belge_tarih) AS tarih,
         sth.sth_stok_kod,
         sth.sth_miktar,
         dbo.fn_StokHarEvrTip(sth.sth_evraktip) AS evrak_adi,
@@ -345,7 +345,7 @@ MIKRO_SEVK_SQL_QUERY = """
         ON sto.sto_kod = sth.sth_stok_kod
         AND (sto.sto_pasif_fl IS NULL OR sto.sto_pasif_fl = 0)
     WHERE sth.sth_evraktip = 2
-        AND sth.sth_tarih >= ?
+        AND sth.sth_belge_tarih >= ?
     ORDER BY sth.sth_evrakno_sira DESC
 """
 
@@ -486,6 +486,134 @@ FILTER_INPUT_STYLE = """
         border-color: #2563eb;
     }
 """
+
+
+# Oturum boyunca şifre önbelleği
+_barkod_delete_verified = False
+
+
+def _verify_barkod_delete_password(parent) -> bool:
+    """BarkodApp silme şifresini doğrula. Oturumda bir kez doğrulanınca tekrar sorulmaz."""
+    global _barkod_delete_verified
+    if _barkod_delete_verified:
+        return True
+
+    # PRGsheet/Pass sayfasından şifreyi yükle
+    try:
+        import io as _io
+        config_manager = CentralConfigManager()
+        spreadsheet_id = config_manager.MASTER_SPREADSHEET_ID
+        url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=xlsx"
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        pass_df = pd.read_excel(_io.BytesIO(response.content), sheet_name="Pass")
+        row = pass_df[pass_df['Modul'] == 'BarkodApp']
+        if row.empty:
+            QMessageBox.critical(parent, "Hata", "Pass sayfasında 'BarkodApp' kaydı bulunamadı.")
+            return False
+        correct_password = str(row.iloc[0]['Password']).strip()
+    except Exception as e:
+        QMessageBox.critical(parent, "Hata", f"Şifre yüklenemedi:\n{str(e)}")
+        return False
+
+    # Şifre dialogu (özel stilize)
+    from PyQt5.QtWidgets import QDialog, QLabel, QHBoxLayout, QVBoxLayout
+    _btn_style = """
+        QPushButton {
+            background-color: #dfdfdf; color: #000000;
+            border: 1px solid #444; padding: 6px 20px;
+            font-size: 12px; font-weight: bold; border-radius: 4px; min-width: 70px;
+        }
+        QPushButton:hover { background-color: #a0a5a2; }
+        QPushButton:pressed { background-color: #909090; }
+    """
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("Şifre Gerekli")
+    dlg.setModal(True)
+    dlg.setFixedWidth(320)
+    dlg.setStyleSheet("background-color: #ffffff;")
+
+    lbl = QLabel("Bu işlemi gerçekleştirmek için şifre giriniz:")
+    lbl.setStyleSheet("color: #000000; font-size: 12px;")
+    lbl.setWordWrap(True)
+
+    pwd_input = QLineEdit()
+    pwd_input.setEchoMode(QLineEdit.Password)
+    pwd_input.setStyleSheet("""
+        QLineEdit {
+            background-color: #ffffff; color: #000000;
+            border: 1px solid #888; border-radius: 3px;
+            padding: 5px; font-size: 12px;
+        }
+    """)
+
+    btn_ok = QPushButton("Tamam")
+    btn_ok.setStyleSheet(_btn_style)
+    btn_cancel = QPushButton("İptal")
+    btn_cancel.setStyleSheet(_btn_style)
+    btn_ok.clicked.connect(dlg.accept)
+    btn_cancel.clicked.connect(dlg.reject)
+
+    btn_row = QHBoxLayout()
+    btn_row.addStretch()
+    btn_row.addWidget(btn_ok)
+    btn_row.addWidget(btn_cancel)
+
+    layout = QVBoxLayout(dlg)
+    layout.addWidget(lbl)
+    layout.addWidget(pwd_input)
+    layout.addLayout(btn_row)
+
+    pwd_input.returnPressed.connect(dlg.accept)
+
+    if dlg.exec_() != QDialog.Accepted:
+        return False
+    if pwd_input.text().strip() != correct_password:
+        QMessageBox.warning(parent, "Hata", "Yanlış şifre. İşlem iptal edildi.")
+        return False
+
+    _barkod_delete_verified = True
+    return True
+
+
+def _confirm_delete(parent, message: str) -> bool:
+    """Stilize silme onay dialogu. True döndürürse kullanıcı onayladı demektir."""
+    from PyQt5.QtWidgets import QDialog, QLabel, QHBoxLayout, QVBoxLayout
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("Onay")
+    dlg.setModal(True)
+    dlg.setStyleSheet("background-color: #ffffff;")
+
+    lbl = QLabel(message)
+    lbl.setStyleSheet("color: #000000; font-size: 13px; padding: 10px;")
+    lbl.setWordWrap(True)
+
+    _btn_style = """
+        QPushButton {
+            background-color: #dfdfdf; color: #000000;
+            border: 1px solid #444; padding: 6px 20px;
+            font-size: 12px; font-weight: bold; border-radius: 4px; min-width: 70px;
+        }
+        QPushButton:hover { background-color: #a0a5a2; }
+        QPushButton:pressed { background-color: #909090; }
+    """
+    btn_yes = QPushButton("Evet")
+    btn_yes.setStyleSheet(_btn_style)
+    btn_no = QPushButton("Hayır")
+    btn_no.setStyleSheet(_btn_style)
+    btn_yes.clicked.connect(dlg.accept)
+    btn_no.clicked.connect(dlg.reject)
+
+    btn_layout = QHBoxLayout()
+    btn_layout.addStretch()
+    btn_layout.addWidget(btn_yes)
+    btn_layout.addWidget(btn_no)
+
+    layout = QVBoxLayout(dlg)
+    layout.addWidget(lbl)
+    layout.addLayout(btn_layout)
+
+    return dlg.exec_() == QDialog.Accepted
 
 
 def _toggle_btn_style(color_hex: str, active: bool) -> str:
@@ -1044,6 +1172,32 @@ class SupabaseClient:
             response.raise_for_status()
             all_readings.extend(response.json())
         return all_readings
+
+    def delete_nakliye_by_id_list(self, id_list: list):
+        """nakliye_fisleri'nden belirtilen id degerleri icin kayitlari sil"""
+        if not id_list:
+            return
+        batch_size = 50
+        for i in range(0, len(id_list), batch_size):
+            batch = id_list[i:i + batch_size]
+            values = ','.join(str(v) for v in batch)
+            url = f"{self.rest_url}/nakliye_fisleri"
+            params = {'id': f'in.({values})'}
+            response = requests.delete(url, headers=self.headers, params=params, timeout=30)
+            response.raise_for_status()
+
+    def delete_sayim_oturum_by_id_list(self, oturum_id_list: list):
+        """sayim_oturumlari'ndan belirtilen id degerleri icin kayitlari sil"""
+        if not oturum_id_list:
+            return
+        batch_size = 50
+        for i in range(0, len(oturum_id_list), batch_size):
+            batch = oturum_id_list[i:i + batch_size]
+            values = ','.join(str(v) for v in batch)
+            url = f"{self.rest_url}/sayim_oturumlari"
+            params = {'id': f'in.({values})'}
+            response = requests.delete(url, headers=self.headers, params=params, timeout=30)
+            response.raise_for_status()
 
     # ---------- Sayim ----------
     def get_all_sayim_oturumlari(self, limit=2000, min_tarih=None, lokasyon=None) -> list:
@@ -2245,7 +2399,7 @@ class SyncThread(QThread):
         query = """
             SELECT DISTINCT sth_evrakno_sira
             FROM dbo.STOK_HAREKETLERI WITH (NOLOCK)
-            WHERE sth_evraktip = 4 AND sth_tarih >= ?
+            WHERE sth_evraktip = 4 AND sth_belge_tarih >= ?
         """
 
         with pyodbc.connect(conn_str, timeout=30) as conn:
@@ -2614,7 +2768,7 @@ class CikisSyncThread(QThread):
         query = """
             SELECT DISTINCT sth_evrakno_sira
             FROM dbo.STOK_HAREKETLERI WITH (NOLOCK)
-            WHERE sth_evraktip = 0 AND sth_tarih >= ?
+            WHERE sth_evraktip = 0 AND sth_belge_tarih >= ?
         """
 
         with pyodbc.connect(conn_str, timeout=30) as conn:
@@ -2901,7 +3055,7 @@ class GirisSyncThread(QThread):
         query = """
             SELECT DISTINCT sth_evrakno_sira
             FROM dbo.STOK_HAREKETLERI WITH (NOLOCK)
-            WHERE sth_evraktip = 12 AND sth_tarih >= ?
+            WHERE sth_evraktip = 12 AND sth_belge_tarih >= ?
         """
 
         with pyodbc.connect(conn_str, timeout=30) as conn:
@@ -3183,7 +3337,7 @@ class SevkSyncThread(QThread):
         query = """
             SELECT DISTINCT sth_evrakno_sira
             FROM dbo.STOK_HAREKETLERI WITH (NOLOCK)
-            WHERE sth_evraktip = 2 AND sth_tarih >= ?
+            WHERE sth_evraktip = 2 AND sth_belge_tarih >= ?
         """
 
         with pyodbc.connect(conn_str, timeout=30) as conn:
@@ -3346,6 +3500,13 @@ class SatisTeslimatWidget(QWidget):
         self.export_button = QPushButton("Excel")
         self.export_button.setStyleSheet(BUTTON_STYLE)
 
+        # Checkbox buttons
+        self.btn_tumunu = QPushButton(u"T\u00fcm\u00fc")
+        self.btn_tumunu.setStyleSheet(BUTTON_STYLE)
+
+        self.btn_sil = QPushButton(u"Se\u00e7ilenleri Sil")
+        self.btn_sil.setStyleSheet(BUTTON_STYLE)
+
         # Info labels
         self.last_sync_label = QLabel("Son Sync: -")
         self.last_sync_label.setStyleSheet(INFO_LABEL_STYLE)
@@ -3413,6 +3574,8 @@ class SatisTeslimatWidget(QWidget):
         self.filter_clear_btn = QPushButton("Temizle")
         self.filter_clear_btn.setStyleSheet(BUTTON_STYLE)
 
+        filter_layout.addWidget(self.btn_tumunu)
+        filter_layout.addWidget(self.btn_sil)
         filter_layout.addWidget(self.filter_evrak)
         filter_layout.addWidget(self.filter_stok)
         filter_layout.addWidget(self.filter_cari)
@@ -3436,6 +3599,8 @@ class SatisTeslimatWidget(QWidget):
         self.refresh_button.clicked.connect(self.load_invoice_table)
         self.all_button.clicked.connect(self.load_all_invoice_table)
         self.export_button.clicked.connect(self.export_to_excel)
+        self.btn_tumunu.clicked.connect(self._toggle_select_all_rows)
+        self.btn_sil.clicked.connect(self._delete_selected_rows)
         self.filter_clear_btn.clicked.connect(self._clear_filters)
 
         # Debounced filter
@@ -3543,6 +3708,8 @@ class SatisTeslimatWidget(QWidget):
         self.refresh_button.setEnabled(enabled)
         self.all_button.setEnabled(enabled)
         self.export_button.setEnabled(enabled)
+        self.btn_tumunu.setEnabled(enabled)
+        self.btn_sil.setEnabled(enabled)
 
     # ==================== TABLE ====================
     def load_invoice_table(self):
@@ -3663,16 +3830,23 @@ class SatisTeslimatWidget(QWidget):
 
         try:
             self.table.setRowCount(len(self.filtered_data))
-            self.table.setColumnCount(len(TABLE_COLUMNS))
-            self.table.setHorizontalHeaderLabels([c[1] for c in TABLE_COLUMNS])
+            self.table.setColumnCount(len(TABLE_COLUMNS) + 1)
+            self.table.setHorizontalHeaderLabels([u'\u2611'] + [c[1] for c in TABLE_COLUMNS])
 
-            # Okuma Durumu sutun index'i
+            # Okuma Durumu sutun index'i (+1: checkbox kolonu)
             okuma_col_idx = next(
-                (j for j, (k, _) in enumerate(TABLE_COLUMNS) if k == 'okuma_durumu'),
+                (j + 1 for j, (k, _) in enumerate(TABLE_COLUMNS) if k == 'okuma_durumu'),
                 None
             )
 
             for i, row_data in enumerate(self.filtered_data):
+                # Checkbox sutunu (index 0)
+                chk_item = QTableWidgetItem()
+                chk_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+                chk_item.setCheckState(Qt.Unchecked)
+                chk_item.setData(Qt.UserRole, row_data.get('evrakno_sira'))
+                self.table.setItem(i, 0, chk_item)
+
                 for j, (key, _) in enumerate(TABLE_COLUMNS):
                     if key == 'okuma_durumu':
                         continue  # Ayri handle edilecek
@@ -3689,7 +3863,7 @@ class SatisTeslimatWidget(QWidget):
                     font = QFont(FONT_FAMILY, FONT_SIZE)
                     font.setBold(True)
                     item.setFont(font)
-                    self.table.setItem(i, j, item)
+                    self.table.setItem(i, j + 1, item)
 
                 # Okuma Durumu sutunu - renkli P1, P2, P3... etiketleri
                 if okuma_col_idx is not None:
@@ -3703,14 +3877,16 @@ class SatisTeslimatWidget(QWidget):
 
             # Header
             header = self.table.horizontalHeader()
-            header.setMinimumSectionSize(100)
+            header.setMinimumSectionSize(0)
             header.setSectionResizeMode(QHeaderView.ResizeToContents)
             header.setStretchLastSection(False)
+            header.setSectionResizeMode(0, QHeaderView.Fixed)
+            self.table.setColumnWidth(0, 30)
 
             # Urun Aciklama sutunu ResizeToContents
             product_desc_idx = next(
-                (j for j, (k, _) in enumerate(TABLE_COLUMNS) if k == 'product_desc'),
-                len(TABLE_COLUMNS) - 2
+                (j + 1 for j, (k, _) in enumerate(TABLE_COLUMNS) if k == 'product_desc'),
+                len(TABLE_COLUMNS) - 1
             )
             header.setSectionResizeMode(product_desc_idx, QHeaderView.ResizeToContents)
 
@@ -3725,6 +3901,43 @@ class SatisTeslimatWidget(QWidget):
         finally:
             self.table.setUpdatesEnabled(True)
             self.table.setSortingEnabled(True)
+
+    # ==================== CHECKBOX ISLEMLERI ====================
+    def _toggle_select_all_rows(self):
+        any_checked = any(
+            self.table.item(i, 0) and self.table.item(i, 0).checkState() == Qt.Checked
+            for i in range(self.table.rowCount())
+        )
+        new_state = Qt.Unchecked if any_checked else Qt.Checked
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item:
+                item.setCheckState(new_state)
+
+    def _delete_selected_rows(self):
+        if not self.supabase_client:
+            QMessageBox.warning(self, "Hata", "Supabase baglantisi yok.")
+            return
+        ids = []
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item and item.checkState() == Qt.Checked:
+                id_val = item.data(Qt.UserRole)
+                if id_val is not None:
+                    ids.append(id_val)
+        if not ids:
+            QMessageBox.information(self, "Bilgi", u"Silinecek sat\u0131r se\u00e7ilmedi.")
+            return
+        if not _verify_barkod_delete_password(self):
+            return
+        if not _confirm_delete(self, f"{len(ids)} satır Supabase'den silinecek. Emin misiniz?"):
+            return
+        try:
+            self.supabase_client.delete_by_evrakno_sira_list(ids)
+            self.status_label.setText(f"{len(ids)} sat\u0131r silindi.")
+            self.load_invoice_table()
+        except Exception as e:
+            QMessageBox.critical(self, "Hata", f"Silme hatas\u0131: {e}")
 
     # ==================== EXPORT ====================
     def export_to_excel(self):
@@ -3947,7 +4160,7 @@ class FabrikaNakliyePlanWidget(QWidget):
         filter_layout = QHBoxLayout()
         filter_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.btn_select_all = QPushButton("Hepsi")
+        self.btn_select_all = QPushButton(u"T\u00fcm\u00fc")
         self.btn_select_all.setCheckable(True)
         self.btn_select_all.setStyleSheet(_toggle_btn_style('#6366f1', False))
 
@@ -4222,7 +4435,7 @@ class FabrikaNakliyePlanWidget(QWidget):
             self.table.setRowCount(len(self.filtered_data))
             # +1: ilk sutun checkbox
             self.table.setColumnCount(len(active_cols) + 1)
-            self.table.setHorizontalHeaderLabels([u""] + [h for (_, h) in active_cols])
+            self.table.setHorizontalHeaderLabels([u'☑'] + [h for (_, h) in active_cols])
 
             for i, row_data in enumerate(self.filtered_data):
                 kalem_no = self._get_kalem_no(row_data)
@@ -4282,10 +4495,10 @@ class FabrikaNakliyePlanWidget(QWidget):
                 self.table.setRowHeight(i, ROW_HEIGHT)
 
             header = self.table.horizontalHeader()
-            header.setMinimumSectionSize(80)
+            header.setMinimumSectionSize(0)
             header.setSectionResizeMode(QHeaderView.ResizeToContents)
             header.setSectionResizeMode(0, QHeaderView.Fixed)
-            self.table.setColumnWidth(0, 17)
+            self.table.setColumnWidth(0, 30)
 
         finally:
             self.table.setUpdatesEnabled(True)
@@ -4640,6 +4853,12 @@ class NakliyeYuklemeWidget(QWidget):
         self.export_button = QPushButton("Excel")
         self.export_button.setStyleSheet(BUTTON_STYLE)
 
+        self.btn_tumunu = QPushButton(u"T\u00fcm\u00fc")
+        self.btn_tumunu.setStyleSheet(BUTTON_STYLE)
+
+        self.btn_sil = QPushButton(u"Se\u00e7ilenleri Sil")
+        self.btn_sil.setStyleSheet(BUTTON_STYLE)
+
         self.last_load_label = QLabel("Son Yukleme: -")
         self.last_load_label.setStyleSheet(INFO_LABEL_STYLE)
 
@@ -4688,6 +4907,8 @@ class NakliyeYuklemeWidget(QWidget):
         self.filter_clear_btn = QPushButton("Temizle")
         self.filter_clear_btn.setStyleSheet(BUTTON_STYLE)
 
+        filter_layout.addWidget(self.btn_tumunu)
+        filter_layout.addWidget(self.btn_sil)
         filter_layout.addWidget(self.filter_oturum)
         filter_layout.addWidget(self.filter_nakliye)
         filter_layout.addWidget(self.filter_malzeme_no)
@@ -4705,6 +4926,8 @@ class NakliyeYuklemeWidget(QWidget):
         self.refresh_button.clicked.connect(self.load_data)
         self.all_button.clicked.connect(self.load_all_data)
         self.export_button.clicked.connect(self.export_to_excel)
+        self.btn_tumunu.clicked.connect(self._toggle_select_all_rows)
+        self.btn_sil.clicked.connect(self._delete_selected_rows)
         self.filter_clear_btn.clicked.connect(self._clear_filters)
 
         self.filter_timer = QTimer()
@@ -4839,15 +5062,22 @@ class NakliyeYuklemeWidget(QWidget):
 
         try:
             self.table.setRowCount(len(self.filtered_data))
-            self.table.setColumnCount(len(NAKLIYE_TABLE_COLUMNS))
-            self.table.setHorizontalHeaderLabels([c[1] for c in NAKLIYE_TABLE_COLUMNS])
+            self.table.setColumnCount(len(NAKLIYE_TABLE_COLUMNS) + 1)
+            self.table.setHorizontalHeaderLabels([u'\u2611'] + [c[1] for c in NAKLIYE_TABLE_COLUMNS])
 
             okuma_col_idx = next(
-                (j for j, (k, _) in enumerate(NAKLIYE_TABLE_COLUMNS) if k == 'okuma_durumu'),
+                (j + 1 for j, (k, _) in enumerate(NAKLIYE_TABLE_COLUMNS) if k == 'okuma_durumu'),
                 None
             )
 
             for i, row_data in enumerate(self.filtered_data):
+                # Checkbox sutunu (index 0)
+                chk_item = QTableWidgetItem()
+                chk_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+                chk_item.setCheckState(Qt.Unchecked)
+                chk_item.setData(Qt.UserRole, row_data.get('id'))
+                self.table.setItem(i, 0, chk_item)
+
                 for j, (key, _) in enumerate(NAKLIYE_TABLE_COLUMNS):
                     if key == 'okuma_durumu':
                         continue
@@ -4875,7 +5105,7 @@ class NakliyeYuklemeWidget(QWidget):
                     font = QFont(FONT_FAMILY, FONT_SIZE)
                     font.setBold(True)
                     item.setFont(font)
-                    self.table.setItem(i, j, item)
+                    self.table.setItem(i, j + 1, item)
 
                 if okuma_col_idx is not None:
                     miktar_raw = str(row_data.get('miktar', '0') or '0').replace(',', '.')
@@ -4887,13 +5117,15 @@ class NakliyeYuklemeWidget(QWidget):
                     self.table.setCellWidget(i, okuma_col_idx, widget)
 
             header = self.table.horizontalHeader()
-            header.setMinimumSectionSize(100)
+            header.setMinimumSectionSize(0)
             header.setSectionResizeMode(QHeaderView.ResizeToContents)
             header.setStretchLastSection(False)
+            header.setSectionResizeMode(0, QHeaderView.Fixed)
+            self.table.setColumnWidth(0, 30)
 
             malzeme_adi_idx = next(
-                (j for j, (k, _) in enumerate(NAKLIYE_TABLE_COLUMNS) if k == 'malzeme_adi'),
-                len(NAKLIYE_TABLE_COLUMNS) - 2
+                (j + 1 for j, (k, _) in enumerate(NAKLIYE_TABLE_COLUMNS) if k == 'malzeme_adi'),
+                len(NAKLIYE_TABLE_COLUMNS) - 1
             )
             header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.ResizeToContents)
 
@@ -4907,6 +5139,43 @@ class NakliyeYuklemeWidget(QWidget):
         finally:
             self.table.setUpdatesEnabled(True)
             self.table.setSortingEnabled(True)
+
+    # ==================== CHECKBOX ISLEMLERI ====================
+    def _toggle_select_all_rows(self):
+        any_checked = any(
+            self.table.item(i, 0) and self.table.item(i, 0).checkState() == Qt.Checked
+            for i in range(self.table.rowCount())
+        )
+        new_state = Qt.Unchecked if any_checked else Qt.Checked
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item:
+                item.setCheckState(new_state)
+
+    def _delete_selected_rows(self):
+        if not self.supabase_client:
+            QMessageBox.warning(self, "Hata", "Supabase baglantisi yok.")
+            return
+        ids = []
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item and item.checkState() == Qt.Checked:
+                id_val = item.data(Qt.UserRole)
+                if id_val is not None:
+                    ids.append(id_val)
+        if not ids:
+            QMessageBox.information(self, "Bilgi", u"Silinecek sat\u0131r se\u00e7ilmedi.")
+            return
+        if not _verify_barkod_delete_password(self):
+            return
+        if not _confirm_delete(self, f"{len(ids)} satır Supabase'den silinecek. Emin misiniz?"):
+            return
+        try:
+            self.supabase_client.delete_nakliye_by_id_list(ids)
+            self.status_label.setText(f"{len(ids)} sat\u0131r silindi.")
+            self.load_data()
+        except Exception as e:
+            QMessageBox.critical(self, "Hata", f"Silme hatas\u0131: {e}")
 
     def export_to_excel(self):
         if not self.filtered_data:
@@ -5145,6 +5414,12 @@ class CikisFisiWidget(QWidget):
         self.export_button = QPushButton("Excel")
         self.export_button.setStyleSheet(BUTTON_STYLE)
 
+        self.btn_tumunu = QPushButton(u"T\u00fcm\u00fc")
+        self.btn_tumunu.setStyleSheet(BUTTON_STYLE)
+
+        self.btn_sil = QPushButton(u"Se\u00e7ilenleri Sil")
+        self.btn_sil.setStyleSheet(BUTTON_STYLE)
+
         self.last_sync_label = QLabel("Son Sync: -")
         self.last_sync_label.setStyleSheet(INFO_LABEL_STYLE)
 
@@ -5190,6 +5465,8 @@ class CikisFisiWidget(QWidget):
         self.filter_clear_btn = QPushButton("Temizle")
         self.filter_clear_btn.setStyleSheet(BUTTON_STYLE)
 
+        filter_layout.addWidget(self.btn_tumunu)
+        filter_layout.addWidget(self.btn_sil)
         filter_layout.addWidget(self.filter_evrak)
         filter_layout.addWidget(self.filter_stok)
         filter_layout.addWidget(self.filter_malzeme)
@@ -5208,6 +5485,8 @@ class CikisFisiWidget(QWidget):
         self.refresh_button.clicked.connect(self.load_data)
         self.all_button.clicked.connect(self.load_all_data)
         self.export_button.clicked.connect(self.export_to_excel)
+        self.btn_tumunu.clicked.connect(self._toggle_select_all_rows)
+        self.btn_sil.clicked.connect(self._delete_selected_rows)
         self.filter_clear_btn.clicked.connect(self._clear_filters)
 
         self.filter_timer = QTimer()
@@ -5299,6 +5578,8 @@ class CikisFisiWidget(QWidget):
         self.refresh_button.setEnabled(enabled)
         self.all_button.setEnabled(enabled)
         self.export_button.setEnabled(enabled)
+        self.btn_tumunu.setEnabled(enabled)
+        self.btn_sil.setEnabled(enabled)
 
     # ==================== TABLE ====================
     def load_data(self):
@@ -5392,15 +5673,22 @@ class CikisFisiWidget(QWidget):
 
         try:
             self.table.setRowCount(len(self.filtered_data))
-            self.table.setColumnCount(len(CIKIS_TABLE_COLUMNS))
-            self.table.setHorizontalHeaderLabels([c[1] for c in CIKIS_TABLE_COLUMNS])
+            self.table.setColumnCount(len(CIKIS_TABLE_COLUMNS) + 1)
+            self.table.setHorizontalHeaderLabels([u'\u2611'] + [c[1] for c in CIKIS_TABLE_COLUMNS])
 
             okuma_col_idx = next(
-                (j for j, (k, _) in enumerate(CIKIS_TABLE_COLUMNS) if k == 'okuma_durumu'),
+                (j + 1 for j, (k, _) in enumerate(CIKIS_TABLE_COLUMNS) if k == 'okuma_durumu'),
                 None
             )
 
             for i, row_data in enumerate(self.filtered_data):
+                # Checkbox sutunu (index 0)
+                chk_item = QTableWidgetItem()
+                chk_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+                chk_item.setCheckState(Qt.Unchecked)
+                chk_item.setData(Qt.UserRole, row_data.get('evrakno_sira'))
+                self.table.setItem(i, 0, chk_item)
+
                 for j, (key, _) in enumerate(CIKIS_TABLE_COLUMNS):
                     if key == 'okuma_durumu':
                         continue
@@ -5419,7 +5707,7 @@ class CikisFisiWidget(QWidget):
                     font = QFont(FONT_FAMILY, FONT_SIZE)
                     font.setBold(True)
                     item.setFont(font)
-                    self.table.setItem(i, j, item)
+                    self.table.setItem(i, j + 1, item)
 
                 # Okuma Durumu sutunu
                 if okuma_col_idx is not None:
@@ -5432,14 +5720,16 @@ class CikisFisiWidget(QWidget):
                     self.table.setCellWidget(i, okuma_col_idx, widget)
 
             header = self.table.horizontalHeader()
-            header.setMinimumSectionSize(100)
+            header.setMinimumSectionSize(0)
             header.setSectionResizeMode(QHeaderView.ResizeToContents)
             header.setStretchLastSection(False)
+            header.setSectionResizeMode(0, QHeaderView.Fixed)
+            self.table.setColumnWidth(0, 30)
 
             # Malzeme Adi sutunu ResizeToContents
             malzeme_adi_idx = next(
-                (j for j, (k, _) in enumerate(CIKIS_TABLE_COLUMNS) if k == 'malzeme_adi'),
-                len(CIKIS_TABLE_COLUMNS) - 2
+                (j + 1 for j, (k, _) in enumerate(CIKIS_TABLE_COLUMNS) if k == 'malzeme_adi'),
+                len(CIKIS_TABLE_COLUMNS) - 1
             )
             header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.ResizeToContents)
 
@@ -5453,6 +5743,43 @@ class CikisFisiWidget(QWidget):
         finally:
             self.table.setUpdatesEnabled(True)
             self.table.setSortingEnabled(True)
+
+    # ==================== CHECKBOX ISLEMLERI ====================
+    def _toggle_select_all_rows(self):
+        any_checked = any(
+            self.table.item(i, 0) and self.table.item(i, 0).checkState() == Qt.Checked
+            for i in range(self.table.rowCount())
+        )
+        new_state = Qt.Unchecked if any_checked else Qt.Checked
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item:
+                item.setCheckState(new_state)
+
+    def _delete_selected_rows(self):
+        if not self.supabase_client:
+            QMessageBox.warning(self, "Hata", "Supabase baglantisi yok.")
+            return
+        ids = []
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item and item.checkState() == Qt.Checked:
+                id_val = item.data(Qt.UserRole)
+                if id_val is not None:
+                    ids.append(id_val)
+        if not ids:
+            QMessageBox.information(self, "Bilgi", u"Silinecek sat\u0131r se\u00e7ilmedi.")
+            return
+        if not _verify_barkod_delete_password(self):
+            return
+        if not _confirm_delete(self, f"{len(ids)} satır Supabase'den silinecek. Emin misiniz?"):
+            return
+        try:
+            self.supabase_client.delete_cikis_by_evrakno_sira_list(ids)
+            self.status_label.setText(f"{len(ids)} sat\u0131r silindi.")
+            self.load_data()
+        except Exception as e:
+            QMessageBox.critical(self, "Hata", f"Silme hatas\u0131: {e}")
 
     # ==================== EXPORT ====================
     def export_to_excel(self):
@@ -5677,6 +6004,12 @@ class GirisFisiWidget(QWidget):
         self.export_button = QPushButton("Excel")
         self.export_button.setStyleSheet(BUTTON_STYLE)
 
+        self.btn_tumunu = QPushButton(u"T\u00fcm\u00fc")
+        self.btn_tumunu.setStyleSheet(BUTTON_STYLE)
+
+        self.btn_sil = QPushButton(u"Se\u00e7ilenleri Sil")
+        self.btn_sil.setStyleSheet(BUTTON_STYLE)
+
         self.last_sync_label = QLabel("Son Sync: -")
         self.last_sync_label.setStyleSheet(INFO_LABEL_STYLE)
 
@@ -5722,6 +6055,8 @@ class GirisFisiWidget(QWidget):
         self.filter_clear_btn = QPushButton("Temizle")
         self.filter_clear_btn.setStyleSheet(BUTTON_STYLE)
 
+        filter_layout.addWidget(self.btn_tumunu)
+        filter_layout.addWidget(self.btn_sil)
         filter_layout.addWidget(self.filter_evrak)
         filter_layout.addWidget(self.filter_stok)
         filter_layout.addWidget(self.filter_malzeme)
@@ -5740,6 +6075,8 @@ class GirisFisiWidget(QWidget):
         self.refresh_button.clicked.connect(self.load_data)
         self.all_button.clicked.connect(self.load_all_data)
         self.export_button.clicked.connect(self.export_to_excel)
+        self.btn_tumunu.clicked.connect(self._toggle_select_all_rows)
+        self.btn_sil.clicked.connect(self._delete_selected_rows)
         self.filter_clear_btn.clicked.connect(self._clear_filters)
 
         self.filter_timer = QTimer()
@@ -5831,6 +6168,8 @@ class GirisFisiWidget(QWidget):
         self.refresh_button.setEnabled(enabled)
         self.all_button.setEnabled(enabled)
         self.export_button.setEnabled(enabled)
+        self.btn_tumunu.setEnabled(enabled)
+        self.btn_sil.setEnabled(enabled)
 
     # ==================== TABLE ====================
     def load_data(self):
@@ -5924,15 +6263,22 @@ class GirisFisiWidget(QWidget):
 
         try:
             self.table.setRowCount(len(self.filtered_data))
-            self.table.setColumnCount(len(GIRIS_TABLE_COLUMNS))
-            self.table.setHorizontalHeaderLabels([c[1] for c in GIRIS_TABLE_COLUMNS])
+            self.table.setColumnCount(len(GIRIS_TABLE_COLUMNS) + 1)
+            self.table.setHorizontalHeaderLabels([u'\u2611'] + [c[1] for c in GIRIS_TABLE_COLUMNS])
 
             okuma_col_idx = next(
-                (j for j, (k, _) in enumerate(GIRIS_TABLE_COLUMNS) if k == 'okuma_durumu'),
+                (j + 1 for j, (k, _) in enumerate(GIRIS_TABLE_COLUMNS) if k == 'okuma_durumu'),
                 None
             )
 
             for i, row_data in enumerate(self.filtered_data):
+                # Checkbox sutunu (index 0)
+                chk_item = QTableWidgetItem()
+                chk_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+                chk_item.setCheckState(Qt.Unchecked)
+                chk_item.setData(Qt.UserRole, row_data.get('evrakno_sira'))
+                self.table.setItem(i, 0, chk_item)
+
                 for j, (key, _) in enumerate(GIRIS_TABLE_COLUMNS):
                     if key == 'okuma_durumu':
                         continue
@@ -5951,7 +6297,7 @@ class GirisFisiWidget(QWidget):
                     font = QFont(FONT_FAMILY, FONT_SIZE)
                     font.setBold(True)
                     item.setFont(font)
-                    self.table.setItem(i, j, item)
+                    self.table.setItem(i, j + 1, item)
 
                 # Okuma Durumu sutunu
                 if okuma_col_idx is not None:
@@ -5964,14 +6310,16 @@ class GirisFisiWidget(QWidget):
                     self.table.setCellWidget(i, okuma_col_idx, widget)
 
             header = self.table.horizontalHeader()
-            header.setMinimumSectionSize(100)
+            header.setMinimumSectionSize(0)
             header.setSectionResizeMode(QHeaderView.ResizeToContents)
             header.setStretchLastSection(False)
+            header.setSectionResizeMode(0, QHeaderView.Fixed)
+            self.table.setColumnWidth(0, 30)
 
             # Malzeme Adi sutunu ResizeToContents
             malzeme_adi_idx = next(
-                (j for j, (k, _) in enumerate(GIRIS_TABLE_COLUMNS) if k == 'malzeme_adi'),
-                len(GIRIS_TABLE_COLUMNS) - 2
+                (j + 1 for j, (k, _) in enumerate(GIRIS_TABLE_COLUMNS) if k == 'malzeme_adi'),
+                len(GIRIS_TABLE_COLUMNS) - 1
             )
             header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.ResizeToContents)
 
@@ -5985,6 +6333,43 @@ class GirisFisiWidget(QWidget):
         finally:
             self.table.setUpdatesEnabled(True)
             self.table.setSortingEnabled(True)
+
+    # ==================== CHECKBOX ISLEMLERI ====================
+    def _toggle_select_all_rows(self):
+        any_checked = any(
+            self.table.item(i, 0) and self.table.item(i, 0).checkState() == Qt.Checked
+            for i in range(self.table.rowCount())
+        )
+        new_state = Qt.Unchecked if any_checked else Qt.Checked
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item:
+                item.setCheckState(new_state)
+
+    def _delete_selected_rows(self):
+        if not self.supabase_client:
+            QMessageBox.warning(self, "Hata", "Supabase baglantisi yok.")
+            return
+        ids = []
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item and item.checkState() == Qt.Checked:
+                id_val = item.data(Qt.UserRole)
+                if id_val is not None:
+                    ids.append(id_val)
+        if not ids:
+            QMessageBox.information(self, "Bilgi", u"Silinecek sat\u0131r se\u00e7ilmedi.")
+            return
+        if not _verify_barkod_delete_password(self):
+            return
+        if not _confirm_delete(self, f"{len(ids)} satır Supabase'den silinecek. Emin misiniz?"):
+            return
+        try:
+            self.supabase_client.delete_giris_by_evrakno_sira_list(ids)
+            self.status_label.setText(f"{len(ids)} sat\u0131r silindi.")
+            self.load_data()
+        except Exception as e:
+            QMessageBox.critical(self, "Hata", f"Silme hatas\u0131: {e}")
 
     # ==================== EXPORT ====================
     def export_to_excel(self):
@@ -6209,6 +6594,12 @@ class SevkFisiWidget(QWidget):
         self.export_button = QPushButton("Excel")
         self.export_button.setStyleSheet(BUTTON_STYLE)
 
+        self.btn_tumunu = QPushButton(u"T\u00fcm\u00fc")
+        self.btn_tumunu.setStyleSheet(BUTTON_STYLE)
+
+        self.btn_sil = QPushButton(u"Se\u00e7ilenleri Sil")
+        self.btn_sil.setStyleSheet(BUTTON_STYLE)
+
         self.last_sync_label = QLabel("Son Sync: -")
         self.last_sync_label.setStyleSheet(INFO_LABEL_STYLE)
 
@@ -6254,6 +6645,8 @@ class SevkFisiWidget(QWidget):
         self.filter_clear_btn = QPushButton("Temizle")
         self.filter_clear_btn.setStyleSheet(BUTTON_STYLE)
 
+        filter_layout.addWidget(self.btn_tumunu)
+        filter_layout.addWidget(self.btn_sil)
         filter_layout.addWidget(self.filter_evrak)
         filter_layout.addWidget(self.filter_stok)
         filter_layout.addWidget(self.filter_malzeme)
@@ -6272,6 +6665,8 @@ class SevkFisiWidget(QWidget):
         self.refresh_button.clicked.connect(self.load_data)
         self.all_button.clicked.connect(self.load_all_data)
         self.export_button.clicked.connect(self.export_to_excel)
+        self.btn_tumunu.clicked.connect(self._toggle_select_all_rows)
+        self.btn_sil.clicked.connect(self._delete_selected_rows)
         self.filter_clear_btn.clicked.connect(self._clear_filters)
 
         self.filter_timer = QTimer()
@@ -6363,6 +6758,8 @@ class SevkFisiWidget(QWidget):
         self.refresh_button.setEnabled(enabled)
         self.all_button.setEnabled(enabled)
         self.export_button.setEnabled(enabled)
+        self.btn_tumunu.setEnabled(enabled)
+        self.btn_sil.setEnabled(enabled)
 
     # ==================== TABLE ====================
     def load_data(self):
@@ -6456,15 +6853,22 @@ class SevkFisiWidget(QWidget):
 
         try:
             self.table.setRowCount(len(self.filtered_data))
-            self.table.setColumnCount(len(SEVK_TABLE_COLUMNS))
-            self.table.setHorizontalHeaderLabels([c[1] for c in SEVK_TABLE_COLUMNS])
+            self.table.setColumnCount(len(SEVK_TABLE_COLUMNS) + 1)
+            self.table.setHorizontalHeaderLabels([u'\u2611'] + [c[1] for c in SEVK_TABLE_COLUMNS])
 
             okuma_col_idx = next(
-                (j for j, (k, _) in enumerate(SEVK_TABLE_COLUMNS) if k == 'okuma_durumu'),
+                (j + 1 for j, (k, _) in enumerate(SEVK_TABLE_COLUMNS) if k == 'okuma_durumu'),
                 None
             )
 
             for i, row_data in enumerate(self.filtered_data):
+                # Checkbox sutunu (index 0)
+                chk_item = QTableWidgetItem()
+                chk_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+                chk_item.setCheckState(Qt.Unchecked)
+                chk_item.setData(Qt.UserRole, row_data.get('evrakno_sira'))
+                self.table.setItem(i, 0, chk_item)
+
                 for j, (key, _) in enumerate(SEVK_TABLE_COLUMNS):
                     if key == 'okuma_durumu':
                         continue
@@ -6483,7 +6887,7 @@ class SevkFisiWidget(QWidget):
                     font = QFont(FONT_FAMILY, FONT_SIZE)
                     font.setBold(True)
                     item.setFont(font)
-                    self.table.setItem(i, j, item)
+                    self.table.setItem(i, j + 1, item)
 
                 # Okuma Durumu sutunu
                 if okuma_col_idx is not None:
@@ -6496,14 +6900,16 @@ class SevkFisiWidget(QWidget):
                     self.table.setCellWidget(i, okuma_col_idx, widget)
 
             header = self.table.horizontalHeader()
-            header.setMinimumSectionSize(100)
+            header.setMinimumSectionSize(0)
             header.setSectionResizeMode(QHeaderView.ResizeToContents)
             header.setStretchLastSection(False)
+            header.setSectionResizeMode(0, QHeaderView.Fixed)
+            self.table.setColumnWidth(0, 30)
 
             # Malzeme Adi sutunu ResizeToContents
             malzeme_adi_idx = next(
-                (j for j, (k, _) in enumerate(SEVK_TABLE_COLUMNS) if k == 'malzeme_adi'),
-                len(SEVK_TABLE_COLUMNS) - 2
+                (j + 1 for j, (k, _) in enumerate(SEVK_TABLE_COLUMNS) if k == 'malzeme_adi'),
+                len(SEVK_TABLE_COLUMNS) - 1
             )
             header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.ResizeToContents)
 
@@ -6517,6 +6923,43 @@ class SevkFisiWidget(QWidget):
         finally:
             self.table.setUpdatesEnabled(True)
             self.table.setSortingEnabled(True)
+
+    # ==================== CHECKBOX ISLEMLERI ====================
+    def _toggle_select_all_rows(self):
+        any_checked = any(
+            self.table.item(i, 0) and self.table.item(i, 0).checkState() == Qt.Checked
+            for i in range(self.table.rowCount())
+        )
+        new_state = Qt.Unchecked if any_checked else Qt.Checked
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item:
+                item.setCheckState(new_state)
+
+    def _delete_selected_rows(self):
+        if not self.supabase_client:
+            QMessageBox.warning(self, "Hata", "Supabase baglantisi yok.")
+            return
+        ids = []
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item and item.checkState() == Qt.Checked:
+                id_val = item.data(Qt.UserRole)
+                if id_val is not None:
+                    ids.append(id_val)
+        if not ids:
+            QMessageBox.information(self, "Bilgi", u"Silinecek sat\u0131r se\u00e7ilmedi.")
+            return
+        if not _verify_barkod_delete_password(self):
+            return
+        if not _confirm_delete(self, f"{len(ids)} satır Supabase'den silinecek. Emin misiniz?"):
+            return
+        try:
+            self.supabase_client.delete_sevk_by_evrakno_sira_list(ids)
+            self.status_label.setText(f"{len(ids)} sat\u0131r silindi.")
+            self.load_data()
+        except Exception as e:
+            QMessageBox.critical(self, "Hata", f"Silme hatas\u0131: {e}")
 
     # ==================== EXPORT ====================
     def export_to_excel(self):
@@ -6708,6 +7151,12 @@ class SayimLokasyonWidget(QWidget):
         self.csv_button = QPushButton(".csv")
         self.csv_button.setStyleSheet(BUTTON_STYLE)
 
+        self.btn_tumunu = QPushButton(u"T\u00fcm\u00fc")
+        self.btn_tumunu.setStyleSheet(BUTTON_STYLE)
+
+        self.btn_sil = QPushButton(u"Se\u00e7ilenleri Sil")
+        self.btn_sil.setStyleSheet(BUTTON_STYLE)
+
         self.last_load_label = QLabel(u"Son Y\u00fckleme: -")
         self.last_load_label.setStyleSheet(INFO_LABEL_STYLE)
 
@@ -6770,6 +7219,8 @@ class SayimLokasyonWidget(QWidget):
         self.filter_clear_btn = QPushButton("Temizle")
         self.filter_clear_btn.setStyleSheet(BUTTON_STYLE)
 
+        filter_layout.addWidget(self.btn_tumunu)
+        filter_layout.addWidget(self.btn_sil)
         filter_layout.addWidget(self.btn_tumu)
         filter_layout.addWidget(self.btn_esit)
         filter_layout.addWidget(self.btn_eksik)
@@ -6790,6 +7241,8 @@ class SayimLokasyonWidget(QWidget):
         self.all_button.clicked.connect(self.load_all_data)
         self.export_button.clicked.connect(self.export_to_excel)
         self.csv_button.clicked.connect(self.export_to_csv)
+        self.btn_tumunu.clicked.connect(self._toggle_select_all_rows)
+        self.btn_sil.clicked.connect(self._delete_selected_rows)
         self.filter_clear_btn.clicked.connect(self._clear_filters)
 
         self.filter_timer = QTimer()
@@ -6951,15 +7404,26 @@ class SayimLokasyonWidget(QWidget):
 
         try:
             self.table.setRowCount(len(self.filtered_data))
-            self.table.setColumnCount(len(SAYIM_TABLE_COLUMNS))
-            self.table.setHorizontalHeaderLabels([c[1] for c in SAYIM_TABLE_COLUMNS])
+            self.table.setColumnCount(len(SAYIM_TABLE_COLUMNS) + 1)
+            self.table.setHorizontalHeaderLabels([u'\u2611'] + [c[1] for c in SAYIM_TABLE_COLUMNS])
 
             okuma_col_idx = next(
-                (j for j, (k, _) in enumerate(SAYIM_TABLE_COLUMNS) if k == 'okuma_durumu'),
+                (j + 1 for j, (k, _) in enumerate(SAYIM_TABLE_COLUMNS) if k == 'okuma_durumu'),
                 None
             )
 
             for i, row_data in enumerate(self.filtered_data):
+                # Sayim satiri icin oturum_id (composite_key'den al: "oturum_id::stok_kod")
+                ck = row_data.get('composite_key', '')
+                oturum_id = ck.split('::')[0] if '::' in ck and not ck.startswith('beklenen::') else None
+
+                # Checkbox sutunu (index 0)
+                chk_item = QTableWidgetItem()
+                chk_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+                chk_item.setCheckState(Qt.Unchecked)
+                chk_item.setData(Qt.UserRole, oturum_id)
+                self.table.setItem(i, 0, chk_item)
+
                 # Satir arka plan rengi belirle (fark bazli)
                 fark_val = float(row_data.get('fark', 0) or 0)
                 beklenen_val = float(row_data.get('beklenen', 0) or 0)
@@ -7005,7 +7469,7 @@ class SayimLokasyonWidget(QWidget):
                     # Satir arka plan (Okuma Durumu haric)
                     if row_bg is not None:
                         item.setBackground(row_bg)
-                    self.table.setItem(i, j, item)
+                    self.table.setItem(i, j + 1, item)
 
                 # Okuma Durumu sutunu
                 if okuma_col_idx is not None:
@@ -7018,13 +7482,15 @@ class SayimLokasyonWidget(QWidget):
                     self.table.setCellWidget(i, okuma_col_idx, widget)
 
             header = self.table.horizontalHeader()
-            header.setMinimumSectionSize(100)
+            header.setMinimumSectionSize(0)
             header.setSectionResizeMode(QHeaderView.ResizeToContents)
             header.setStretchLastSection(False)
+            header.setSectionResizeMode(0, QHeaderView.Fixed)
+            self.table.setColumnWidth(0, 30)
 
             malzeme_adi_idx = next(
-                (j for j, (k, _) in enumerate(SAYIM_TABLE_COLUMNS) if k == 'malzeme_adi'),
-                len(SAYIM_TABLE_COLUMNS) - 2
+                (j + 1 for j, (k, _) in enumerate(SAYIM_TABLE_COLUMNS) if k == 'malzeme_adi'),
+                len(SAYIM_TABLE_COLUMNS) - 1
             )
             header.setSectionResizeMode(malzeme_adi_idx, QHeaderView.ResizeToContents)
 
@@ -7038,6 +7504,45 @@ class SayimLokasyonWidget(QWidget):
         finally:
             self.table.setUpdatesEnabled(True)
             self.table.setSortingEnabled(True)
+
+    # ==================== CHECKBOX ISLEMLERI ====================
+    def _toggle_select_all_rows(self):
+        any_checked = any(
+            self.table.item(i, 0) and self.table.item(i, 0).checkState() == Qt.Checked
+            for i in range(self.table.rowCount())
+        )
+        new_state = Qt.Unchecked if any_checked else Qt.Checked
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item:
+                item.setCheckState(new_state)
+
+    def _delete_selected_rows(self):
+        if not self.supabase_client:
+            QMessageBox.warning(self, "Hata", "Supabase baglantisi yok.")
+            return
+        oturum_ids = []
+        seen = set()
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item and item.checkState() == Qt.Checked:
+                id_val = item.data(Qt.UserRole)
+                if id_val is not None and id_val not in seen:
+                    seen.add(id_val)
+                    oturum_ids.append(id_val)
+        if not oturum_ids:
+            QMessageBox.information(self, "Bilgi", u"Silinecek sat\u0131r se\u00e7ilmedi.")
+            return
+        if not _verify_barkod_delete_password(self):
+            return
+        if not _confirm_delete(self, f"{len(oturum_ids)} sayım oturumu Supabase'den silinecek. Emin misiniz?"):
+            return
+        try:
+            self.supabase_client.delete_sayim_oturum_by_id_list(oturum_ids)
+            self.status_label.setText(f"{len(oturum_ids)} oturum silindi.")
+            self.load_data()
+        except Exception as e:
+            QMessageBox.critical(self, "Hata", f"Silme hatas\u0131: {e}")
 
     # ==================== EXPORT ====================
     def export_to_excel(self):
