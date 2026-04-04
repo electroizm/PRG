@@ -509,11 +509,11 @@ def _verify_barkod_delete_password(parent) -> bool:
         pass_df = pd.read_excel(_io.BytesIO(response.content), sheet_name="Pass")
         row = pass_df[pass_df['Modul'] == 'BarkodApp']
         if row.empty:
-            QMessageBox.critical(parent, "Hata", "Pass sayfasında 'BarkodApp' kaydı bulunamadı.")
+            _show_message(parent, "Hata", "Pass sayfasında 'BarkodApp' kaydı bulunamadı.")
             return False
         correct_password = str(row.iloc[0]['Password']).strip()
     except Exception as e:
-        QMessageBox.critical(parent, "Hata", f"Şifre yüklenemedi:\n{str(e)}")
+        _show_message(parent, "Hata", f"Şifre yüklenemedi:\n{str(e)}")
         return False
 
     # Şifre dialogu (özel stilize)
@@ -569,11 +569,46 @@ def _verify_barkod_delete_password(parent) -> bool:
     if dlg.exec_() != QDialog.Accepted:
         return False
     if pwd_input.text().strip() != correct_password:
-        QMessageBox.warning(parent, "Hata", "Yanlış şifre. İşlem iptal edildi.")
+        _show_message(parent, "Hata", "Yanlış şifre. İşlem iptal edildi.")
         return False
 
     _barkod_delete_verified = True
     return True
+
+
+def _show_message(parent, title: str, message: str):
+    """Stilize bilgi/hata mesaj dialogu."""
+    from PyQt5.QtWidgets import QDialog, QLabel, QVBoxLayout, QHBoxLayout
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(title)
+    dlg.setModal(True)
+    dlg.setFixedWidth(360)
+    dlg.setStyleSheet("background-color: #ffffff;")
+
+    lbl = QLabel(message)
+    lbl.setStyleSheet("color: #000000; font-size: 12px;")
+    lbl.setWordWrap(True)
+
+    btn_ok = QPushButton("Tamam")
+    btn_ok.setStyleSheet("""
+        QPushButton {
+            background-color: #dfdfdf; color: #000000;
+            border: 1px solid #444; padding: 6px 20px;
+            font-size: 12px; font-weight: bold; border-radius: 4px; min-width: 70px;
+        }
+        QPushButton:hover { background-color: #a0a5a2; }
+        QPushButton:pressed { background-color: #909090; }
+    """)
+    btn_ok.clicked.connect(dlg.accept)
+
+    btn_row = QHBoxLayout()
+    btn_row.addStretch()
+    btn_row.addWidget(btn_ok)
+
+    layout = QVBoxLayout(dlg)
+    layout.addWidget(lbl)
+    layout.addLayout(btn_row)
+    dlg.exec_()
 
 
 def _confirm_delete(parent, message: str) -> bool:
@@ -930,16 +965,40 @@ class SupabaseClient:
         return set(row['evrakno_sira'] for row in response.json() if row.get('evrakno_sira'))
 
     def delete_cikis_by_evrakno_sira_list(self, sira_list: list):
-        """cikis_fisi'nden belirtilen evrakno_sira degerleri icin kayitlari sil"""
+        """cikis_fisi'nden evrakno_sira'ya gore sil — id'leri cekip cascade ile siler"""
         if not sira_list:
             return
         batch_size = 50
+        all_ids = []
         for i in range(0, len(sira_list), batch_size):
             batch = sira_list[i:i + batch_size]
             values = ','.join(str(v) for v in batch)
+            resp = _request_with_retry(requests.get, f"{self.rest_url}/cikis_fisi",
+                                       headers=self.headers,
+                                       params={'select': 'id', 'evrakno_sira': f'in.({values})'}, timeout=30)
+            resp.raise_for_status()
+            all_ids.extend(row['id'] for row in resp.json() if row.get('id') is not None)
+        self.delete_cikis_by_id_list(all_ids)
+
+    def delete_cikis_by_id_list(self, id_list: list):
+        """cikis_fisi'nden belirtilen id degerleri icin kayitlari sil (okumalari ile birlikte)"""
+        if not id_list:
+            return
+        batch_size = 50
+        ids_int = [int(float(v)) for v in id_list]
+        for i in range(0, len(ids_int), batch_size):
+            batch = ids_int[i:i + batch_size]
+            values = ','.join(str(v) for v in batch)
+            # Önce okumalari sil (FK: fis_no -> cikis_fisi.id)
+            url_okuma = f"{self.rest_url}/cikis_fisi_okumalari"
+            resp = requests.delete(url_okuma, headers=self.headers,
+                                   params={'fis_no': f'in.({values})'}, timeout=30)
+            if resp.status_code not in (200, 204):
+                resp.raise_for_status()
+            # Sonra ana tabloyu sil
             url = f"{self.rest_url}/cikis_fisi"
-            params = {'evrakno_sira': f'in.({values})'}
-            response = requests.delete(url, headers=self.headers, params=params, timeout=30)
+            response = requests.delete(url, headers=self.headers,
+                                       params={'id': f'in.({values})'}, timeout=30)
             response.raise_for_status()
 
     # ---------- Giris Fisi ----------
@@ -1022,16 +1081,40 @@ class SupabaseClient:
         return set(row['evrakno_sira'] for row in response.json() if row.get('evrakno_sira'))
 
     def delete_giris_by_evrakno_sira_list(self, sira_list: list):
-        """giris_fisi'nden belirtilen evrakno_sira degerleri icin kayitlari sil"""
+        """giris_fisi'nden evrakno_sira'ya gore sil — id'leri cekip cascade ile siler"""
         if not sira_list:
             return
         batch_size = 50
+        all_ids = []
         for i in range(0, len(sira_list), batch_size):
             batch = sira_list[i:i + batch_size]
             values = ','.join(str(v) for v in batch)
+            resp = _request_with_retry(requests.get, f"{self.rest_url}/giris_fisi",
+                                       headers=self.headers,
+                                       params={'select': 'id', 'evrakno_sira': f'in.({values})'}, timeout=30)
+            resp.raise_for_status()
+            all_ids.extend(row['id'] for row in resp.json() if row.get('id') is not None)
+        self.delete_giris_by_id_list(all_ids)
+
+    def delete_giris_by_id_list(self, id_list: list):
+        """giris_fisi'nden belirtilen id degerleri icin kayitlari sil (okumalari ile birlikte)"""
+        if not id_list:
+            return
+        batch_size = 50
+        ids_int = [int(float(v)) for v in id_list]
+        for i in range(0, len(ids_int), batch_size):
+            batch = ids_int[i:i + batch_size]
+            values = ','.join(str(v) for v in batch)
+            # Önce okumalari sil (FK: fis_no -> giris_fisi.id)
+            url_okuma = f"{self.rest_url}/giris_fisi_okumalari"
+            resp = requests.delete(url_okuma, headers=self.headers,
+                                   params={'fis_no': f'in.({values})'}, timeout=30)
+            if resp.status_code not in (200, 204):
+                resp.raise_for_status()
+            # Sonra ana tabloyu sil
             url = f"{self.rest_url}/giris_fisi"
-            params = {'evrakno_sira': f'in.({values})'}
-            response = requests.delete(url, headers=self.headers, params=params, timeout=30)
+            response = requests.delete(url, headers=self.headers,
+                                       params={'id': f'in.({values})'}, timeout=30)
             response.raise_for_status()
 
     # ---------- Sevk Fisi ----------
@@ -1114,16 +1197,40 @@ class SupabaseClient:
         return set(row['evrakno_sira'] for row in response.json() if row.get('evrakno_sira'))
 
     def delete_sevk_by_evrakno_sira_list(self, sira_list: list):
-        """sevk_fisi'nden belirtilen evrakno_sira degerleri icin kayitlari sil"""
+        """sevk_fisi'nden evrakno_sira'ya gore sil — id'leri cekip cascade ile siler"""
         if not sira_list:
             return
         batch_size = 50
+        all_ids = []
         for i in range(0, len(sira_list), batch_size):
             batch = sira_list[i:i + batch_size]
             values = ','.join(str(v) for v in batch)
+            resp = _request_with_retry(requests.get, f"{self.rest_url}/sevk_fisi",
+                                       headers=self.headers,
+                                       params={'select': 'id', 'evrakno_sira': f'in.({values})'}, timeout=30)
+            resp.raise_for_status()
+            all_ids.extend(row['id'] for row in resp.json() if row.get('id') is not None)
+        self.delete_sevk_by_id_list(all_ids)
+
+    def delete_sevk_by_id_list(self, id_list: list):
+        """sevk_fisi'nden belirtilen id degerleri icin kayitlari sil (okumalari ile birlikte)"""
+        if not id_list:
+            return
+        batch_size = 50
+        ids_int = [int(float(v)) for v in id_list]
+        for i in range(0, len(ids_int), batch_size):
+            batch = ids_int[i:i + batch_size]
+            values = ','.join(str(v) for v in batch)
+            # Önce okumalari sil (FK: fis_no -> sevk_fisi.id)
+            url_okuma = f"{self.rest_url}/sevk_fisi_okumalari"
+            resp = requests.delete(url_okuma, headers=self.headers,
+                                   params={'fis_no': f'in.({values})'}, timeout=30)
+            if resp.status_code not in (200, 204):
+                resp.raise_for_status()
+            # Sonra ana tabloyu sil
             url = f"{self.rest_url}/sevk_fisi"
-            params = {'evrakno_sira': f'in.({values})'}
-            response = requests.delete(url, headers=self.headers, params=params, timeout=30)
+            response = requests.delete(url, headers=self.headers,
+                                       params={'id': f'in.({values})'}, timeout=30)
             response.raise_for_status()
 
     # ---------- Nakliye ----------
@@ -1174,16 +1281,24 @@ class SupabaseClient:
         return all_readings
 
     def delete_nakliye_by_id_list(self, id_list: list):
-        """nakliye_fisleri'nden belirtilen id degerleri icin kayitlari sil"""
+        """nakliye_fisleri'nden belirtilen id degerleri icin kayitlari sil (okumalari ile birlikte)"""
         if not id_list:
             return
         batch_size = 50
-        for i in range(0, len(id_list), batch_size):
-            batch = id_list[i:i + batch_size]
+        ids_int = [int(float(v)) for v in id_list]
+        for i in range(0, len(ids_int), batch_size):
+            batch = ids_int[i:i + batch_size]
             values = ','.join(str(v) for v in batch)
+            # Önce okumalari sil (FK: nakliye_kalem_id -> nakliye_fisleri.id)
+            url_okuma = f"{self.rest_url}/nakliye_fisleri_okumalari"
+            resp = requests.delete(url_okuma, headers=self.headers,
+                                   params={'nakliye_kalem_id': f'in.({values})'}, timeout=30)
+            if resp.status_code not in (200, 204):
+                resp.raise_for_status()
+            # Sonra ana tabloyu sil
             url = f"{self.rest_url}/nakliye_fisleri"
-            params = {'id': f'in.({values})'}
-            response = requests.delete(url, headers=self.headers, params=params, timeout=30)
+            response = requests.delete(url, headers=self.headers,
+                                       params={'id': f'in.({values})'}, timeout=30)
             response.raise_for_status()
 
     def delete_sayim_oturum_by_id_list(self, oturum_id_list: list):
@@ -3916,7 +4031,7 @@ class SatisTeslimatWidget(QWidget):
 
     def _delete_selected_rows(self):
         if not self.supabase_client:
-            QMessageBox.warning(self, "Hata", "Supabase baglantisi yok.")
+            _show_message(self, "Hata", "Supabase bağlantısı yok.")
             return
         ids = []
         for i in range(self.table.rowCount()):
@@ -3926,7 +4041,7 @@ class SatisTeslimatWidget(QWidget):
                 if id_val is not None:
                     ids.append(id_val)
         if not ids:
-            QMessageBox.information(self, "Bilgi", u"Silinecek sat\u0131r se\u00e7ilmedi.")
+            _show_message(self, "Bilgi", "Silinecek satır seçilmedi.")
             return
         if not _verify_barkod_delete_password(self):
             return
@@ -3937,7 +4052,7 @@ class SatisTeslimatWidget(QWidget):
             self.status_label.setText(f"{len(ids)} sat\u0131r silindi.")
             self.load_invoice_table()
         except Exception as e:
-            QMessageBox.critical(self, "Hata", f"Silme hatas\u0131: {e}")
+            _show_message(self, "Hata", f"Silme hatası: {e}")
 
     # ==================== EXPORT ====================
     def export_to_excel(self):
@@ -5154,7 +5269,7 @@ class NakliyeYuklemeWidget(QWidget):
 
     def _delete_selected_rows(self):
         if not self.supabase_client:
-            QMessageBox.warning(self, "Hata", "Supabase baglantisi yok.")
+            _show_message(self, "Hata", "Supabase bağlantısı yok.")
             return
         ids = []
         for i in range(self.table.rowCount()):
@@ -5164,7 +5279,7 @@ class NakliyeYuklemeWidget(QWidget):
                 if id_val is not None:
                     ids.append(id_val)
         if not ids:
-            QMessageBox.information(self, "Bilgi", u"Silinecek sat\u0131r se\u00e7ilmedi.")
+            _show_message(self, "Bilgi", "Silinecek satır seçilmedi.")
             return
         if not _verify_barkod_delete_password(self):
             return
@@ -5175,7 +5290,7 @@ class NakliyeYuklemeWidget(QWidget):
             self.status_label.setText(f"{len(ids)} sat\u0131r silindi.")
             self.load_data()
         except Exception as e:
-            QMessageBox.critical(self, "Hata", f"Silme hatas\u0131: {e}")
+            _show_message(self, "Hata", f"Silme hatası: {e}")
 
     def export_to_excel(self):
         if not self.filtered_data:
@@ -5686,7 +5801,7 @@ class CikisFisiWidget(QWidget):
                 chk_item = QTableWidgetItem()
                 chk_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
                 chk_item.setCheckState(Qt.Unchecked)
-                chk_item.setData(Qt.UserRole, row_data.get('evrakno_sira'))
+                chk_item.setData(Qt.UserRole, row_data.get('id'))
                 self.table.setItem(i, 0, chk_item)
 
                 for j, (key, _) in enumerate(CIKIS_TABLE_COLUMNS):
@@ -5758,7 +5873,7 @@ class CikisFisiWidget(QWidget):
 
     def _delete_selected_rows(self):
         if not self.supabase_client:
-            QMessageBox.warning(self, "Hata", "Supabase baglantisi yok.")
+            _show_message(self, "Hata", "Supabase bağlantısı yok.")
             return
         ids = []
         for i in range(self.table.rowCount()):
@@ -5768,18 +5883,18 @@ class CikisFisiWidget(QWidget):
                 if id_val is not None:
                     ids.append(id_val)
         if not ids:
-            QMessageBox.information(self, "Bilgi", u"Silinecek sat\u0131r se\u00e7ilmedi.")
+            _show_message(self, "Bilgi", "Silinecek satır seçilmedi.")
             return
         if not _verify_barkod_delete_password(self):
             return
         if not _confirm_delete(self, f"{len(ids)} satır Supabase'den silinecek. Emin misiniz?"):
             return
         try:
-            self.supabase_client.delete_cikis_by_evrakno_sira_list(ids)
-            self.status_label.setText(f"{len(ids)} sat\u0131r silindi.")
+            self.supabase_client.delete_cikis_by_id_list(ids)
+            self.status_label.setText(f"{len(ids)} satır silindi.")
             self.load_data()
         except Exception as e:
-            QMessageBox.critical(self, "Hata", f"Silme hatas\u0131: {e}")
+            _show_message(self, "Hata", f"Silme hatası: {e}")
 
     # ==================== EXPORT ====================
     def export_to_excel(self):
@@ -6276,7 +6391,7 @@ class GirisFisiWidget(QWidget):
                 chk_item = QTableWidgetItem()
                 chk_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
                 chk_item.setCheckState(Qt.Unchecked)
-                chk_item.setData(Qt.UserRole, row_data.get('evrakno_sira'))
+                chk_item.setData(Qt.UserRole, row_data.get('id'))
                 self.table.setItem(i, 0, chk_item)
 
                 for j, (key, _) in enumerate(GIRIS_TABLE_COLUMNS):
@@ -6348,7 +6463,7 @@ class GirisFisiWidget(QWidget):
 
     def _delete_selected_rows(self):
         if not self.supabase_client:
-            QMessageBox.warning(self, "Hata", "Supabase baglantisi yok.")
+            _show_message(self, "Hata", "Supabase bağlantısı yok.")
             return
         ids = []
         for i in range(self.table.rowCount()):
@@ -6358,18 +6473,18 @@ class GirisFisiWidget(QWidget):
                 if id_val is not None:
                     ids.append(id_val)
         if not ids:
-            QMessageBox.information(self, "Bilgi", u"Silinecek sat\u0131r se\u00e7ilmedi.")
+            _show_message(self, "Bilgi", "Silinecek satır seçilmedi.")
             return
         if not _verify_barkod_delete_password(self):
             return
         if not _confirm_delete(self, f"{len(ids)} satır Supabase'den silinecek. Emin misiniz?"):
             return
         try:
-            self.supabase_client.delete_giris_by_evrakno_sira_list(ids)
-            self.status_label.setText(f"{len(ids)} sat\u0131r silindi.")
+            self.supabase_client.delete_giris_by_id_list(ids)
+            self.status_label.setText(f"{len(ids)} satır silindi.")
             self.load_data()
         except Exception as e:
-            QMessageBox.critical(self, "Hata", f"Silme hatas\u0131: {e}")
+            _show_message(self, "Hata", f"Silme hatası: {e}")
 
     # ==================== EXPORT ====================
     def export_to_excel(self):
@@ -6866,7 +6981,7 @@ class SevkFisiWidget(QWidget):
                 chk_item = QTableWidgetItem()
                 chk_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
                 chk_item.setCheckState(Qt.Unchecked)
-                chk_item.setData(Qt.UserRole, row_data.get('evrakno_sira'))
+                chk_item.setData(Qt.UserRole, row_data.get('id'))
                 self.table.setItem(i, 0, chk_item)
 
                 for j, (key, _) in enumerate(SEVK_TABLE_COLUMNS):
@@ -6938,7 +7053,7 @@ class SevkFisiWidget(QWidget):
 
     def _delete_selected_rows(self):
         if not self.supabase_client:
-            QMessageBox.warning(self, "Hata", "Supabase baglantisi yok.")
+            _show_message(self, "Hata", "Supabase bağlantısı yok.")
             return
         ids = []
         for i in range(self.table.rowCount()):
@@ -6948,18 +7063,18 @@ class SevkFisiWidget(QWidget):
                 if id_val is not None:
                     ids.append(id_val)
         if not ids:
-            QMessageBox.information(self, "Bilgi", u"Silinecek sat\u0131r se\u00e7ilmedi.")
+            _show_message(self, "Bilgi", "Silinecek satır seçilmedi.")
             return
         if not _verify_barkod_delete_password(self):
             return
         if not _confirm_delete(self, f"{len(ids)} satır Supabase'den silinecek. Emin misiniz?"):
             return
         try:
-            self.supabase_client.delete_sevk_by_evrakno_sira_list(ids)
-            self.status_label.setText(f"{len(ids)} sat\u0131r silindi.")
+            self.supabase_client.delete_sevk_by_id_list(ids)
+            self.status_label.setText(f"{len(ids)} satır silindi.")
             self.load_data()
         except Exception as e:
-            QMessageBox.critical(self, "Hata", f"Silme hatas\u0131: {e}")
+            _show_message(self, "Hata", f"Silme hatası: {e}")
 
     # ==================== EXPORT ====================
     def export_to_excel(self):
@@ -7519,7 +7634,7 @@ class SayimLokasyonWidget(QWidget):
 
     def _delete_selected_rows(self):
         if not self.supabase_client:
-            QMessageBox.warning(self, "Hata", "Supabase baglantisi yok.")
+            _show_message(self, "Hata", "Supabase bağlantısı yok.")
             return
         oturum_ids = []
         seen = set()
@@ -7531,7 +7646,7 @@ class SayimLokasyonWidget(QWidget):
                     seen.add(id_val)
                     oturum_ids.append(id_val)
         if not oturum_ids:
-            QMessageBox.information(self, "Bilgi", u"Silinecek sat\u0131r se\u00e7ilmedi.")
+            _show_message(self, "Bilgi", "Silinecek satır seçilmedi.")
             return
         if not _verify_barkod_delete_password(self):
             return
@@ -7542,7 +7657,7 @@ class SayimLokasyonWidget(QWidget):
             self.status_label.setText(f"{len(oturum_ids)} oturum silindi.")
             self.load_data()
         except Exception as e:
-            QMessageBox.critical(self, "Hata", f"Silme hatas\u0131: {e}")
+            _show_message(self, "Hata", f"Silme hatası: {e}")
 
     # ==================== EXPORT ====================
     def export_to_excel(self):
