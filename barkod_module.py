@@ -196,8 +196,8 @@ SEVK_TABLE_COLUMNS = [
     ('tarih', 'Tarih'),
     ('stok_kod', 'Stok Kod'),
     ('miktar', 'Miktar'),
-    ('cikis_depo', u'\u00c7\u0131k\u0131\u015f Depo'),
-    ('giris_depo', u'Giri\u015f Depo'),
+    ('cikis_depo_no', u'\u00c7\u0131k\u0131\u015f Depo'),
+    ('giris_depo_no', u'Giri\u015f Depo'),
     ('paket_sayisi', 'Paket'),
     ('malzeme_adi', u'Malzeme Ad\u0131'),
     ('satinalma_kalem_id', 'BagKodu'),
@@ -334,8 +334,8 @@ MIKRO_SEVK_SQL_QUERY = """
         sth.sth_stok_kod,
         sth.sth_miktar,
         dbo.fn_StokHarEvrTip(sth.sth_evraktip) AS evrak_adi,
-        dbo.fn_StokHarDepoIsmi(sth.sth_giris_depo_no, sth.sth_cikis_depo_no, 1) AS cikis_depo,
-        dbo.fn_StokHarDepoIsmi(sth.sth_giris_depo_no, sth.sth_cikis_depo_no, 0) AS giris_depo,
+        sth.sth_cikis_depo_no AS cikis_depo_no,
+        sth.sth_giris_depo_no AS giris_depo_no,
         bar.bar_serino_veya_bagkodu AS bag_kodu,
         sto.sto_isim AS malzeme_adi
     FROM dbo.STOK_HAREKETLERI sth WITH (NOLOCK)
@@ -989,12 +989,19 @@ class SupabaseClient:
         for i in range(0, len(ids_int), batch_size):
             batch = ids_int[i:i + batch_size]
             values = ','.join(str(v) for v in batch)
-            # Önce okumalari sil (FK: fis_no -> cikis_fisi.id)
-            url_okuma = f"{self.rest_url}/cikis_fisi_okumalari"
-            resp = requests.delete(url_okuma, headers=self.headers,
-                                   params={'fis_no': f'in.({values})'}, timeout=30)
-            if resp.status_code not in (200, 204):
-                resp.raise_for_status()
+            # fis_no kolonu evrakno_sira degerini tutar; once evrakno_sira'lari cek
+            resp_sira = _request_with_retry(requests.get, f"{self.rest_url}/cikis_fisi",
+                                            headers=self.headers,
+                                            params={'select': 'evrakno_sira', 'id': f'in.({values})'}, timeout=30)
+            resp_sira.raise_for_status()
+            sira_values = ','.join(str(r['evrakno_sira']) for r in resp_sira.json() if r.get('evrakno_sira') is not None)
+            # Önce okumalari sil (FK: fis_no = evrakno_sira -> cikis_fisi)
+            if sira_values:
+                url_okuma = f"{self.rest_url}/cikis_fisi_okumalari"
+                resp = requests.delete(url_okuma, headers=self.headers,
+                                       params={'fis_no': f'in.({sira_values})'}, timeout=30)
+                if resp.status_code not in (200, 204):
+                    resp.raise_for_status()
             # Sonra ana tabloyu sil
             url = f"{self.rest_url}/cikis_fisi"
             response = requests.delete(url, headers=self.headers,
@@ -1105,12 +1112,19 @@ class SupabaseClient:
         for i in range(0, len(ids_int), batch_size):
             batch = ids_int[i:i + batch_size]
             values = ','.join(str(v) for v in batch)
-            # Önce okumalari sil (FK: fis_no -> giris_fisi.id)
-            url_okuma = f"{self.rest_url}/giris_fisi_okumalari"
-            resp = requests.delete(url_okuma, headers=self.headers,
-                                   params={'fis_no': f'in.({values})'}, timeout=30)
-            if resp.status_code not in (200, 204):
-                resp.raise_for_status()
+            # fis_no kolonu evrakno_sira degerini tutar; once evrakno_sira'lari cek
+            resp_sira = _request_with_retry(requests.get, f"{self.rest_url}/giris_fisi",
+                                            headers=self.headers,
+                                            params={'select': 'evrakno_sira', 'id': f'in.({values})'}, timeout=30)
+            resp_sira.raise_for_status()
+            sira_values = ','.join(str(r['evrakno_sira']) for r in resp_sira.json() if r.get('evrakno_sira') is not None)
+            # Önce okumalari sil (FK: fis_no = evrakno_sira -> giris_fisi)
+            if sira_values:
+                url_okuma = f"{self.rest_url}/giris_fisi_okumalari"
+                resp = requests.delete(url_okuma, headers=self.headers,
+                                       params={'fis_no': f'in.({sira_values})'}, timeout=30)
+                if resp.status_code not in (200, 204):
+                    resp.raise_for_status()
             # Sonra ana tabloyu sil
             url = f"{self.rest_url}/giris_fisi"
             response = requests.delete(url, headers=self.headers,
@@ -1132,7 +1146,7 @@ class SupabaseClient:
         all_data = []
         page_size = 500
         offset = 0
-        select_cols = 'id,evrakno_seri,evrakno_sira,tarih,stok_kod,miktar,cikis_depo,giris_depo,paket_sayisi,malzeme_adi,evrak_adi,satinalma_kalem_id'
+        select_cols = 'id,evrakno_seri,evrakno_sira,tarih,stok_kod,miktar,cikis_depo_no,giris_depo_no,paket_sayisi,malzeme_adi,evrak_adi,satinalma_kalem_id'
         while offset < limit:
             current_limit = min(page_size, limit - offset)
             params = {
@@ -1221,12 +1235,19 @@ class SupabaseClient:
         for i in range(0, len(ids_int), batch_size):
             batch = ids_int[i:i + batch_size]
             values = ','.join(str(v) for v in batch)
-            # Önce okumalari sil (FK: fis_no -> sevk_fisi.id)
-            url_okuma = f"{self.rest_url}/sevk_fisi_okumalari"
-            resp = requests.delete(url_okuma, headers=self.headers,
-                                   params={'fis_no': f'in.({values})'}, timeout=30)
-            if resp.status_code not in (200, 204):
-                resp.raise_for_status()
+            # fis_no kolonu evrakno_sira degerini tutar; once evrakno_sira'lari cek
+            resp_sira = _request_with_retry(requests.get, f"{self.rest_url}/sevk_fisi",
+                                            headers=self.headers,
+                                            params={'select': 'evrakno_sira', 'id': f'in.({values})'}, timeout=30)
+            resp_sira.raise_for_status()
+            sira_values = ','.join(str(r['evrakno_sira']) for r in resp_sira.json() if r.get('evrakno_sira') is not None)
+            # Önce okumalari sil (FK: fis_no = evrakno_sira -> sevk_fisi)
+            if sira_values:
+                url_okuma = f"{self.rest_url}/sevk_fisi_okumalari"
+                resp = requests.delete(url_okuma, headers=self.headers,
+                                       params={'fis_no': f'in.({sira_values})'}, timeout=30)
+                if resp.status_code not in (200, 204):
+                    resp.raise_for_status()
             # Sonra ana tabloyu sil
             url = f"{self.rest_url}/sevk_fisi"
             response = requests.delete(url, headers=self.headers,
@@ -3298,8 +3319,8 @@ class SevkSyncThread(QThread):
                     'tarih': tarih_str,
                     'stok_kod': fis.get('sth_stok_kod'),
                     'miktar': float(fis.get('sth_miktar', 0) or 0),
-                    'cikis_depo': fis.get('cikis_depo'),
-                    'giris_depo': fis.get('giris_depo'),
+                    'cikis_depo_no': fis.get('cikis_depo_no'),
+                    'giris_depo_no': fis.get('giris_depo_no'),
                     'evrak_adi': fis.get('evrak_adi') or u'Sevk Fi\u015fi',
                     'paket_sayisi': paket_info['paketSayisi'] if paket_info else 1,
                     'malzeme_adi': fis.get('malzeme_adi'),
@@ -4072,24 +4093,13 @@ class SatisTeslimatWidget(QWidget):
 
     # ==================== KOPYALAMA ====================
     def show_context_menu(self, pos):
-        menu = QMenu(self.table)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #ffffff;
-                border: 1px solid #a0a0a0;
-                padding: 4px 0px;
-            }
-            QMenu::item {
-                padding: 6px 24px;
-                color: #000000;
-                font-size: 14px;
-            }
-            QMenu::item:selected {
-                background-color: #3399ff;
-                color: #ffffff;
-            }
-        """)
-        hucre_action = QAction("Kopyala", self)
+        menu = QMenu()
+        menu.setStyleSheet(
+            "QMenu { background-color: #ffffff; border: 1px solid #a0a0a0; color: #000000; }"
+            "QMenu::item { padding: 6px 24px; color: #000000; font-size: 14px; background-color: #ffffff; }"
+            "QMenu::item:selected { background-color: #3399ff; color: #ffffff; }"
+        )
+        hucre_action = QAction("Kopyala", menu)
         hucre_action.triggered.connect(lambda: self.copy_cell(pos))
         menu.addAction(hucre_action)
         menu.exec_(self.table.viewport().mapToGlobal(pos))
@@ -4653,24 +4663,13 @@ class FabrikaNakliyePlanWidget(QWidget):
             self.log(f"HATA: Export hatasi: {e}")
 
     def show_context_menu(self, pos):
-        menu = QMenu(self.table)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #ffffff;
-                border: 1px solid #a0a0a0;
-                padding: 4px 0px;
-            }
-            QMenu::item {
-                padding: 6px 24px;
-                color: #000000;
-                font-size: 14px;
-            }
-            QMenu::item:selected {
-                background-color: #3399ff;
-                color: #ffffff;
-            }
-        """)
-        hucre_action = QAction("Kopyala", self)
+        menu = QMenu()
+        menu.setStyleSheet(
+            "QMenu { background-color: #ffffff; border: 1px solid #a0a0a0; color: #000000; }"
+            "QMenu::item { padding: 6px 24px; color: #000000; font-size: 14px; background-color: #ffffff; }"
+            "QMenu::item:selected { background-color: #3399ff; color: #ffffff; }"
+        )
+        hucre_action = QAction("Kopyala", menu)
         hucre_action.triggered.connect(lambda: self.copy_cell(pos))
         menu.addAction(hucre_action)
         menu.exec_(self.table.viewport().mapToGlobal(pos))
@@ -5307,24 +5306,13 @@ class NakliyeYuklemeWidget(QWidget):
             self.log(f"HATA: Export hatasi: {e}")
 
     def show_context_menu(self, pos):
-        menu = QMenu(self.table)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #ffffff;
-                border: 1px solid #a0a0a0;
-                padding: 4px 0px;
-            }
-            QMenu::item {
-                padding: 6px 24px;
-                color: #000000;
-                font-size: 14px;
-            }
-            QMenu::item:selected {
-                background-color: #3399ff;
-                color: #ffffff;
-            }
-        """)
-        hucre_action = QAction("Kopyala", self)
+        menu = QMenu()
+        menu.setStyleSheet(
+            "QMenu { background-color: #ffffff; border: 1px solid #a0a0a0; color: #000000; }"
+            "QMenu::item { padding: 6px 24px; color: #000000; font-size: 14px; background-color: #ffffff; }"
+            "QMenu::item:selected { background-color: #3399ff; color: #ffffff; }"
+        )
+        hucre_action = QAction("Kopyala", menu)
         hucre_action.triggered.connect(lambda: self.copy_cell(pos))
         menu.addAction(hucre_action)
         menu.exec_(self.table.viewport().mapToGlobal(pos))
@@ -5914,24 +5902,13 @@ class CikisFisiWidget(QWidget):
 
     # ==================== KOPYALAMA ====================
     def show_context_menu(self, pos):
-        menu = QMenu(self.table)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #ffffff;
-                border: 1px solid #a0a0a0;
-                padding: 4px 0px;
-            }
-            QMenu::item {
-                padding: 6px 24px;
-                color: #000000;
-                font-size: 14px;
-            }
-            QMenu::item:selected {
-                background-color: #3399ff;
-                color: #ffffff;
-            }
-        """)
-        hucre_action = QAction("Kopyala", self)
+        menu = QMenu()
+        menu.setStyleSheet(
+            "QMenu { background-color: #ffffff; border: 1px solid #a0a0a0; color: #000000; }"
+            "QMenu::item { padding: 6px 24px; color: #000000; font-size: 14px; background-color: #ffffff; }"
+            "QMenu::item:selected { background-color: #3399ff; color: #ffffff; }"
+        )
+        hucre_action = QAction("Kopyala", menu)
         hucre_action.triggered.connect(lambda: self.copy_cell(pos))
         menu.addAction(hucre_action)
         menu.exec_(self.table.viewport().mapToGlobal(pos))
@@ -6504,24 +6481,13 @@ class GirisFisiWidget(QWidget):
 
     # ==================== KOPYALAMA ====================
     def show_context_menu(self, pos):
-        menu = QMenu(self.table)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #ffffff;
-                border: 1px solid #a0a0a0;
-                padding: 4px 0px;
-            }
-            QMenu::item {
-                padding: 6px 24px;
-                color: #000000;
-                font-size: 14px;
-            }
-            QMenu::item:selected {
-                background-color: #3399ff;
-                color: #ffffff;
-            }
-        """)
-        hucre_action = QAction("Kopyala", self)
+        menu = QMenu()
+        menu.setStyleSheet(
+            "QMenu { background-color: #ffffff; border: 1px solid #a0a0a0; color: #000000; }"
+            "QMenu::item { padding: 6px 24px; color: #000000; font-size: 14px; background-color: #ffffff; }"
+            "QMenu::item:selected { background-color: #3399ff; color: #ffffff; }"
+        )
+        hucre_action = QAction("Kopyala", menu)
         hucre_action.triggered.connect(lambda: self.copy_cell(pos))
         menu.addAction(hucre_action)
         menu.exec_(self.table.viewport().mapToGlobal(pos))
@@ -7010,7 +6976,7 @@ class SevkFisiWidget(QWidget):
                     paket = int(row_data.get('paket_sayisi', 1) or 1)
                     kalem_id = row_data.get('id')
                     paket_readings = self.readings_map.get(kalem_id, {})
-                    depo_no = str(row_data.get('cikis_depo', '') or '')
+                    depo_no = str(row_data.get('cikis_depo_no', '') or '')
                     widget = _build_okuma_durumu_widget(miktar, paket, paket_readings, depo_no)
                     self.table.setCellWidget(i, okuma_col_idx, widget)
 
@@ -7094,24 +7060,13 @@ class SevkFisiWidget(QWidget):
 
     # ==================== KOPYALAMA ====================
     def show_context_menu(self, pos):
-        menu = QMenu(self.table)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #ffffff;
-                border: 1px solid #a0a0a0;
-                padding: 4px 0px;
-            }
-            QMenu::item {
-                padding: 6px 24px;
-                color: #000000;
-                font-size: 14px;
-            }
-            QMenu::item:selected {
-                background-color: #3399ff;
-                color: #ffffff;
-            }
-        """)
-        hucre_action = QAction("Kopyala", self)
+        menu = QMenu()
+        menu.setStyleSheet(
+            "QMenu { background-color: #ffffff; border: 1px solid #a0a0a0; color: #000000; }"
+            "QMenu::item { padding: 6px 24px; color: #000000; font-size: 14px; background-color: #ffffff; }"
+            "QMenu::item:selected { background-color: #3399ff; color: #ffffff; }"
+        )
+        hucre_action = QAction("Kopyala", menu)
         hucre_action.triggered.connect(lambda: self.copy_cell(pos))
         menu.addAction(hucre_action)
         menu.exec_(self.table.viewport().mapToGlobal(pos))
@@ -7704,24 +7659,13 @@ class SayimLokasyonWidget(QWidget):
 
     # ==================== KOPYALAMA ====================
     def show_context_menu(self, pos):
-        menu = QMenu(self.table)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #ffffff;
-                border: 1px solid #a0a0a0;
-                padding: 4px 0px;
-            }
-            QMenu::item {
-                padding: 6px 24px;
-                color: #000000;
-                font-size: 14px;
-            }
-            QMenu::item:selected {
-                background-color: #3399ff;
-                color: #ffffff;
-            }
-        """)
-        hucre_action = QAction("Kopyala", self)
+        menu = QMenu()
+        menu.setStyleSheet(
+            "QMenu { background-color: #ffffff; border: 1px solid #a0a0a0; color: #000000; }"
+            "QMenu::item { padding: 6px 24px; color: #000000; font-size: 14px; background-color: #ffffff; }"
+            "QMenu::item:selected { background-color: #3399ff; color: #ffffff; }"
+        )
+        hucre_action = QAction("Kopyala", menu)
         hucre_action.triggered.connect(lambda: self.copy_cell(pos))
         menu.addAction(hucre_action)
         menu.exec_(self.table.viewport().mapToGlobal(pos))
