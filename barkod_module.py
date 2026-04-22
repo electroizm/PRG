@@ -5,7 +5,6 @@ Barkod Module - Mikro SQL Server'dan Satış Faturalarını Supabase'e Senkroniz
 import os
 import sys
 import logging
-import math
 import pyodbc
 from datetime import datetime, timedelta
 
@@ -254,7 +253,6 @@ MIKRO_SQL_QUERY = """
         ON sth.sth_stok_kod = bar.bar_stokkodu
     LEFT JOIN dbo.STOKLAR sto WITH (NOLOCK)
         ON sto.sto_kod = sth.sth_stok_kod
-        AND (sto.sto_pasif_fl IS NULL OR sto.sto_pasif_fl = 0)
     WHERE sth.sth_evraktip = 4
         AND sth.sth_belge_tarih >= ?
     ORDER BY sth.sth_evrakno_sira DESC
@@ -298,7 +296,6 @@ MIKRO_CIKIS_SQL_QUERY = """
         ON bar.bar_stokkodu = sth.sth_stok_kod
     LEFT JOIN dbo.STOKLAR sto WITH (NOLOCK)
         ON sto.sto_kod = sth.sth_stok_kod
-        AND (sto.sto_pasif_fl IS NULL OR sto.sto_pasif_fl = 0)
     WHERE sth.sth_evraktip = 0
         AND sth.sth_belge_tarih >= ?
     ORDER BY sth.sth_evrakno_sira DESC
@@ -320,7 +317,6 @@ MIKRO_GIRIS_SQL_QUERY = """
         ON bar.bar_stokkodu = sth.sth_stok_kod
     LEFT JOIN dbo.STOKLAR sto WITH (NOLOCK)
         ON sto.sto_kod = sth.sth_stok_kod
-        AND (sto.sto_pasif_fl IS NULL OR sto.sto_pasif_fl = 0)
     WHERE sth.sth_evraktip = 12
         AND sth.sth_belge_tarih >= ?
     ORDER BY sth.sth_evrakno_sira DESC
@@ -343,7 +339,6 @@ MIKRO_SEVK_SQL_QUERY = """
         ON bar.bar_stokkodu = sth.sth_stok_kod
     LEFT JOIN dbo.STOKLAR sto WITH (NOLOCK)
         ON sto.sto_kod = sth.sth_stok_kod
-        AND (sto.sto_pasif_fl IS NULL OR sto.sto_pasif_fl = 0)
     WHERE sth.sth_evraktip = 2
         AND sth.sth_belge_tarih >= ?
     ORDER BY sth.sth_evrakno_sira DESC
@@ -2365,7 +2360,7 @@ class SyncThread(QThread):
                     'cari_kodu': fatura.get('cari_kodu') or '',
                     'cari_adi': fatura.get('cari_adi') or '',
                     'product_code': product_code,
-                    'product_desc': paket_info['productDesc'] if paket_info else None,
+                    'product_desc': fatura.get('malzeme_adi') or (paket_info.get('productDesc') if paket_info else None),
                     'paket_sayisi': paket_info['paketSayisi'] if paket_info else 1,
                     'satinalma_kalem_id': fatura.get('bag_kodu'),
                     'malzeme_adi': fatura.get('malzeme_adi'),
@@ -4811,7 +4806,7 @@ class FabrikaNakliyePlanWidget(QWidget):
             row = {}
             for col in mail_cols:
                 val = str(r.get(col, '') or '')
-                if col == 'Sipariş Tarihi':
+                if col in ('Sipariş Tarihi', 'Teslimat Tarihi'):
                     val = self._format_date(val)
                 elif col == 'Kalem No':
                     val = self._format_kalem_no(val)
@@ -8276,7 +8271,7 @@ class BarkodApp(QWidget):
         self.satis_tab = SatisTeslimatWidget()
         self.tab_widget.addTab(self.satis_tab, u"Sat\u0131\u015f / Teslimat Fi\u015fi")
         self.fabrika_nakliye_tab = FabrikaNakliyePlanWidget()
-        self.tab_widget.addTab(self.fabrika_nakliye_tab, u"Fabrika Nakliye Plan\u0131")
+        self.tab_widget.addTab(self.fabrika_nakliye_tab, u"Fabrika Yükleme Planı")
         self.nakliye_tab = NakliyeYuklemeWidget()
         self.tab_widget.addTab(self.nakliye_tab, u"Nakliye Y\u00fckleme")
         self.sevk_tab = SevkFisiWidget()
