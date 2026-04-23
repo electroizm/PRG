@@ -11,7 +11,6 @@ from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 import pyodbc
 import requests
-import time
 import re
 import urllib.parse
 import webbrowser
@@ -193,6 +192,27 @@ class StokApp(QMainWindow):
         self.bekleyen_btn.setToolTip("BekleyenFast.exe programını çalıştırır")
         self.bekleyen_btn.clicked.connect(self.run_bekleyen)
         search_layout.addWidget(self.bekleyen_btn)
+
+        # Mutlak Butonu
+        self.mutlak_btn = QPushButton("Mutlak")
+        self.mutlak_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dfdfdf;
+                color: black;
+                border: 1px solid #444;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-size:14px;
+                font-weight: bold;
+                min-width: 50px;
+            }
+            QPushButton:hover {
+                background-color: #a0a5a2;
+            }
+        """)
+        self.mutlak_btn.setToolTip("Teşhir/emanet hedef adetlerini yönetir")
+        self.mutlak_btn.clicked.connect(self.open_mutlak_dialog)
+        search_layout.addWidget(self.mutlak_btn)
 
         # Malzeme Butonu
         self.malzeme_btn = QPushButton("Malzeme")
@@ -1119,6 +1139,11 @@ class StokApp(QMainWindow):
             
             self.original_df = self.original_df[final_columns]
 
+            # Mutlak sütunlarını başlat ve PRGsheet/Mutlak sayfasından yükle
+            self.original_df['EXC_MUTLAK'] = 0
+            self.original_df['SUBE_MUTLAK'] = 0
+            self.load_mutlak_data()
+
             # Veri işleme tamamlandı
             self.progress_bar.setValue(90)
             self.status_label.setText("✅ Veri işleme tamamlandı")
@@ -1702,6 +1727,90 @@ class StokApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Hata", f"WhatsApp bağlantı hatası: {str(e)}")
 
+    def load_mutlak_data(self):
+        """PRGsheet/Mutlak sayfasından EXC_MUTLAK ve SUBE_MUTLAK değerlerini yükle ve Ver'i güncelle.
+        Yükleme sırasında otomatik temizlik (EXC>=EXC_MUTLAK veya SUBE>=SUBE_MUTLAK) gerçekleşirse,
+        temizlenmiş hali PRGsheet/Mutlak sayfasına anında geri yazılır."""
+        try:
+            config_manager = CentralConfigManager()
+            spreadsheet = config_manager.gc.open("PRGsheet")
+            try:
+                ws = spreadsheet.worksheet("Mutlak")
+            except Exception:
+                return
+            records = ws.get_all_records()
+            if not records:
+                return
+            mutlak_df = pd.DataFrame(records)
+            if 'Malzeme Kodu' not in mutlak_df.columns:
+                return
+            for col in ['EXC_MUTLAK', 'SUBE_MUTLAK']:
+                if col in mutlak_df.columns:
+                    mutlak_df[col] = pd.to_numeric(mutlak_df[col], errors='coerce').fillna(0).astype(int)
+            self.original_df['Malzeme Kodu'] = self.original_df['Malzeme Kodu'].astype(str)
+            mutlak_df['Malzeme Kodu'] = mutlak_df['Malzeme Kodu'].astype(str)
+
+            cleanup_happened = False  # Sheet'teki değer ile final değer farklıysa True olur
+
+            for _, mrow in mutlak_df.iterrows():
+                mask = self.original_df['Malzeme Kodu'] == str(mrow['Malzeme Kodu'])
+                if not mask.any():
+                    continue
+                idx = self.original_df[mask].index[0]
+                exc_m_orig  = int(mrow.get('EXC_MUTLAK', 0))
+                sube_m_orig = int(mrow.get('SUBE_MUTLAK', 0))
+                exc_m, sube_m = exc_m_orig, sube_m_orig
+                exc_cur  = int(self.original_df.loc[idx, 'EXC'])
+                sube_cur = int(self.original_df.loc[idx, 'SUBE'])
+                if exc_cur >= exc_m:
+                    exc_m = 0
+                if sube_cur >= sube_m:
+                    sube_m = 0
+                # Cleanup tespit: sheet'teki orijinal > 0 idi ama şimdi 0
+                if (exc_m_orig > 0 and exc_m == 0) or (sube_m_orig > 0 and sube_m == 0):
+                    cleanup_happened = True
+                self.original_df.loc[idx, 'EXC_MUTLAK'] = exc_m
+                self.original_df.loc[idx, 'SUBE_MUTLAK'] = sube_m
+
+            self.recalculate_ver_with_mutlak()
+
+            # Otomatik temizlik olduysa Sheet'i de güncelle
+            if cleanup_happened:
+                logging.info("Mutlak: otomatik temizlik tespit edildi, Sheet güncelleniyor...")
+                _persist_mutlak_to_sheets(self.original_df)
+        except Exception as e:
+            logging.warning(f"Mutlak verileri yüklenemedi: {e}")
+
+    def recalculate_ver_with_mutlak(self):
+        """EXC_MUTLAK ve SUBE_MUTLAK dahil Ver'i Mutlak olan satırlar için yeniden hesapla."""
+        if 'EXC_MUTLAK' not in self.original_df.columns:
+            return
+        has_mutlak = (self.original_df['EXC_MUTLAK'] > 0) | (self.original_df['SUBE_MUTLAK'] > 0)
+        if not has_mutlak.any():
+            return
+        df = self.original_df
+        borc     = df['Borç'].fillna(0).astype(int)
+        depo     = df['DEPO'].fillna(0).astype(int)
+        bekleyen = df['Bekleyen'].fillna(0).astype(int)
+        plan     = df['Plan'].fillna(0).astype(int)
+        exc      = df['EXC'].fillna(0).astype(int)
+        sube     = df['SUBE'].fillna(0).astype(int)
+        exc_m    = df['EXC_MUTLAK'].fillna(0).astype(int)
+        sube_m   = df['SUBE_MUTLAK'].fillna(0).astype(int)
+        delta_exc  = (exc_m - exc).clip(lower=0)
+        delta_sube = (sube_m - sube).clip(lower=0)
+        ver = (borc - depo - bekleyen - plan + delta_exc + delta_sube).clip(lower=0).astype(int)
+        self.original_df.loc[has_mutlak, 'Ver'] = ver[has_mutlak]
+
+    def open_mutlak_dialog(self):
+        if not hasattr(self, 'original_df') or self.original_df is None or self.original_df.empty:
+            QMessageBox.warning(self, "Uyarı", "Önce verileri yükleyin.")
+            return
+        dialog = MutlakDialog(self.original_df, self)
+        dialog.exec_()
+        self.recalculate_ver_with_mutlak()
+        self.filter_data()
+
     def Stoklistesi(self):
         try:
             save_path = r"D:/GoogleDrive"
@@ -1721,3 +1830,468 @@ class StokApp(QMainWindow):
         
         except Exception as e:
             QMessageBox.critical(self, "Hata", f"Excel'e kaydetme hatası: {str(e)}")
+
+_DLG_STYLESHEET = (
+    "QDialog { background-color: #ffffff; color: #000000; }"
+    "QWidget { background-color: #ffffff; color: #000000; }"
+    "QLabel  { background-color: #ffffff; color: #000000; font-size: 14px; padding: 12px; }"
+    "QPushButton { background-color: #dfdfdf; color: #000000; border: 1px solid #444; "
+    "padding: 6px 18px; border-radius: 4px; font-weight: bold; min-width: 70px; }"
+    "QPushButton:hover { background-color: #a0a5a2; }"
+)
+
+
+def _force_white_palette(widget):
+    """Windows dark mode'u override et — hem palette hem autoFill."""
+    pal = widget.palette()
+    pal.setColor(QPalette.Window,     QColor("#ffffff"))
+    pal.setColor(QPalette.WindowText, QColor("#000000"))
+    pal.setColor(QPalette.Base,       QColor("#ffffff"))
+    pal.setColor(QPalette.Text,       QColor("#000000"))
+    pal.setColor(QPalette.Button,     QColor("#dfdfdf"))
+    pal.setColor(QPalette.ButtonText, QColor("#000000"))
+    widget.setPalette(pal)
+    widget.setAutoFillBackground(True)
+
+
+def _persist_mutlak_to_sheets(df):
+    """PRGsheet/Mutlak sayfasını verilen DataFrame'in MUTLAK > 0 satırlarıyla yeniden yaz.
+    Hem StokApp.load_mutlak_data (otomatik temizlik sonrası) hem de MutlakDialog._save_to_sheets
+    tarafından kullanılır. Hatalar log'a yazılır, exception fırlatılmaz."""
+    try:
+        if df is None or df.empty:
+            return
+        if 'EXC_MUTLAK' not in df.columns or 'SUBE_MUTLAK' not in df.columns:
+            return
+        config_manager = CentralConfigManager()
+        spreadsheet = config_manager.gc.open("PRGsheet")
+        try:
+            ws = spreadsheet.worksheet("Mutlak")
+        except Exception:
+            ws = spreadsheet.add_worksheet(title="Mutlak", rows=1000, cols=10)
+        save_df = df[
+            (df['EXC_MUTLAK'] > 0) | (df['SUBE_MUTLAK'] > 0)
+        ][['Malzeme Kodu', 'SAP Kodu', 'Malzeme Adı', 'EXC_MUTLAK', 'SUBE_MUTLAK']].copy()
+        ws.clear()
+        if not save_df.empty:
+            header = [['Malzeme Kodu', 'SAP Kodu', 'Malzeme Adı', 'EXC_MUTLAK', 'SUBE_MUTLAK']]
+            rows = [
+                [str(r['Malzeme Kodu']), str(r['SAP Kodu']), str(r['Malzeme Adı']),
+                 int(r['EXC_MUTLAK']), int(r['SUBE_MUTLAK'])]
+                for _, r in save_df.iterrows()
+            ]
+            ws.update(header + rows)
+        logging.info(f"Mutlak sayfası güncellendi: {len(save_df)} satır")
+    except Exception as e:
+        logging.error(f"Mutlak sayfası kayıt hatası: {e}")
+
+
+def _mutlak_show_message(parent, title: str, message: str):
+    """Beyaz tema uyumlu bilgi penceresi."""
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(title)
+    _force_white_palette(dlg)
+    dlg.setStyleSheet(_DLG_STYLESHEET)
+    lay = QVBoxLayout(dlg)
+    lbl = QLabel(message)
+    lbl.setWordWrap(True)
+    _force_white_palette(lbl)
+    lay.addWidget(lbl)
+    btn_row = QHBoxLayout()
+    btn_row.addStretch()
+    btn = QPushButton("Tamam")
+    btn.clicked.connect(dlg.accept)
+    btn_row.addWidget(btn)
+    lay.addLayout(btn_row)
+    dlg.resize(360, dlg.sizeHint().height())
+    dlg.exec_()
+
+
+def _mutlak_confirm(parent, message: str) -> bool:
+    """Beyaz tema uyumlu onay penceresi (Evet / Hayır)."""
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("Onay")
+    _force_white_palette(dlg)
+    dlg.setStyleSheet(_DLG_STYLESHEET)
+    lay = QVBoxLayout(dlg)
+    lbl = QLabel(message)
+    lbl.setWordWrap(True)
+    _force_white_palette(lbl)
+    lay.addWidget(lbl)
+    btn_row = QHBoxLayout()
+    btn_row.addStretch()
+    btn_evet  = QPushButton("Evet")
+    btn_hayir = QPushButton("Hayır")
+    result = {'ok': False}
+    def _yes():
+        result['ok'] = True
+        dlg.accept()
+    btn_evet.clicked.connect(_yes)
+    btn_hayir.clicked.connect(dlg.reject)
+    btn_row.addWidget(btn_evet)
+    btn_row.addWidget(btn_hayir)
+    lay.addLayout(btn_row)
+    dlg.resize(360, dlg.sizeHint().height())
+    dlg.exec_()
+    return result['ok']
+
+
+# ==================== MUTLAK DIALOG ====================
+class MutlakDialog(QDialog):
+    _COLS     = ['SAP Kodu', 'EXC_MUTLAK', 'SUBE_MUTLAK', 'EXC', 'SUBE', 'DEPO','Malzeme Adı', 'Ver',
+                 'Fazla', 'Bekleyen', 'Plan', 'Miktar', 'Malzeme Kodu']
+    _HEADERS  = ['SAP Kodu', 'EXC MUTLAK', 'SUBE MUTLAK', 'EXC', 'SUBE', 'DEPO','Malzeme Adı', 'Ver',
+                 'Fazla', 'Bekleyen', 'Plan', 'Miktar', 'Malzeme Kodu']
+    _EDITABLE = {1, 2}   # EXC MUTLAK, SUBE MUTLAK sütun indeksleri
+    _VER_COL  = 7
+
+    def __init__(self, original_df, parent=None):
+        super().__init__(parent)
+        self.df = original_df          # Direkt referans — mutasyonlar parent'a yansır
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self._save_to_sheets)
+        # Arama için debounce timer — UI donmasını önler
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.timeout.connect(self._refresh)
+        self.setWindowTitle("Mutlak — Teşhir / Emanet Hedef Yönetimi")
+        # Genişlik ana pencereyle aynı; yükseklik sabit 720 px
+        if parent is not None:
+            self.resize(parent.width(), 720)
+        else:
+            self.resize(1300, 720)
+        self._setup_ui()
+        self._refresh()
+
+    def _schedule_filter(self):
+        """Arama yazılırken her tuşta yeniden filtreleme yapma — 250ms debounce."""
+        self._filter_timer.stop()
+        self._filter_timer.start(250)
+
+    # ──────────────────────── UI ────────────────────────
+    def _setup_ui(self):
+        # Windows dark mode'u zorla bypass et — palette + autoFill
+        _force_white_palette(self)
+        # Diyalog geneli beyaz tema (QLineEdit'i objectName ile hedefle ki hücre editor'unu etkilemesin)
+        self.setStyleSheet("""
+            QDialog { background-color: #ffffff; color: #000000; }
+            QLabel  { color: #000000; }
+            QLineEdit#mutlakSearch {
+                background-color: #ffffff;
+                color: #000000;
+                font-size: 14px;
+                padding: 8px;
+                border-radius: 4px;
+                border: 1px solid #444;
+            }
+            QPushButton#mutlakBtn {
+                background-color: #dfdfdf;
+                color: black;
+                border: 1px solid #444;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-size: 14px;
+                font-weight: bold;
+                min-width: 60px;
+            }
+            QPushButton#mutlakBtn:hover { background-color: #a0a5a2; }
+            QTableWidget {
+                background-color: #ffffff;
+                alternate-background-color: #f5f5f5;
+                color: #000000;
+                gridline-color: #d0d0d0;
+                font-size: 14px;
+                font-weight: bold;
+                selection-background-color: #cce4ff;
+                selection-color: #000000;
+            }
+            QTableWidget::item {
+                color: #000000;
+                padding: 4px;
+            }
+            QTableWidget::item:focus { outline: none; border: none; }
+            QTableWidget QLineEdit {
+                background-color: #ffffff;
+                color: #000000;
+                padding: 0px;
+                border: 1px solid #3399ff;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QHeaderView { background-color: #e8e8e8; }
+            QHeaderView::section {
+                background-color: #e8e8e8;
+                color: #000000;
+                font-weight: bold;
+                padding: 6px;
+                border: 1px solid #c0c0c0;
+            }
+            QHeaderView::section:vertical {
+                background-color: #f5f5f5;
+                color: #000000;
+                padding: 4px;
+            }
+            QTableCornerButton::section {
+                background-color: #e8e8e8;
+                border: 1px solid #c0c0c0;
+            }
+            QTableWidget QTableCornerButton::section { background-color: #e8e8e8; }
+            QScrollBar:vertical, QScrollBar:horizontal {
+                background: #f0f0f0;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+
+        # Üst bar: [Tümü] [Sil] [Search] [Temizle] [Kaydet]
+        top_row = QHBoxLayout()
+
+        self.btn_tumunu = QPushButton("Tümü")
+        self.btn_tumunu.setObjectName("mutlakBtn")
+        self.btn_tumunu.clicked.connect(self._toggle_select_all)
+        top_row.addWidget(self.btn_tumunu)
+
+        self.btn_sil = QPushButton("Sil")
+        self.btn_sil.setObjectName("mutlakBtn")
+        self.btn_sil.clicked.connect(self._delete_selected)
+        top_row.addWidget(self.btn_sil)
+
+        self.search_box = QLineEdit()
+        self.search_box.setObjectName("mutlakSearch")
+        self.search_box.setPlaceholderText("Malzeme Adı veya Stok Kodu...")
+        self.search_box.textChanged.connect(self._schedule_filter)
+        top_row.addWidget(self.search_box, 1)
+
+        self.btn_temizle = QPushButton("Temizle")
+        self.btn_temizle.setObjectName("mutlakBtn")
+        self.btn_temizle.clicked.connect(self._clear_search)
+        top_row.addWidget(self.btn_temizle)
+
+        self.btn_kaydet = QPushButton("Kaydet")
+        self.btn_kaydet.setObjectName("mutlakBtn")
+        self.btn_kaydet.clicked.connect(self._save_and_close)
+        top_row.addWidget(self.btn_kaydet)
+
+        layout.addLayout(top_row)
+
+        # Tablo: 1 ek sütun (checkbox) + veri sütunları
+        self.table = QTableWidget()
+        self.table.setColumnCount(len(self._HEADERS) + 1)
+        self.table.setHorizontalHeaderLabels([''] + self._HEADERS)
+        header = self.table.horizontalHeader()
+        # Performans için Interactive — kullanıcı isterse boyut değiştirebilir; otomatik resize KAPALI
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(True)
+        # Sabit varsayılan genişlikler — render hızı için
+        default_widths = {
+            0: 32,    # Checkbox
+            1: 90,    # SAP Kodu
+            2: 100,    # EXC MUTLAK
+            3: 100,   # SUBE MUTLAK
+            4: 50,    # EXC
+            5: 55,   # SUBE
+            6: 55,   # DEPO
+            7: 700,   # Malzeme Adı
+            8: 55,    # Ver
+            9: 55,    # Fazla
+            10: 75,    # Bekleyen
+            11: 55,    # Plan
+            12: 65,   # Miktar
+            # 13: Malzeme Kodu — stretchLastSection ile dolar
+        }
+        for col_idx, width in default_widths.items():
+            self.table.setColumnWidth(col_idx, width)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.SelectedClicked)
+        self.table.itemChanged.connect(self._on_item_changed)
+        # Tablonun kendisi + viewport beyaz olsun (Windows dark mode override)
+        _force_white_palette(self.table)
+        _force_white_palette(self.table.viewport())
+        layout.addWidget(self.table)
+
+    # ──────────────────────── VERİ ──────────────────────
+    _MAX_RESULTS = 200  # Performans için maksimum gösterilen satır
+
+    def _get_rows(self, text: str) -> pd.DataFrame:
+        df = self.df
+        for col in ('EXC_MUTLAK', 'SUBE_MUTLAK'):
+            if col not in df.columns:
+                df[col] = 0
+        search_text = text.strip().lower()
+        if not search_text:
+            # Arama yoksa yalnızca Mutlak değeri girilmiş satırları göster
+            return df[(df['EXC_MUTLAK'] > 0) | (df['SUBE_MUTLAK'] > 0)]
+        # Çoklu kelime AND lookahead regex'i (ana modüldeki ile aynı)
+        parts = [re.escape(part) for part in search_text.split() if part]
+        pattern = r'(?=.*?{})'.format(')(?=.*?'.join(parts))
+        ad_mask  = df['Malzeme Adı'].astype(str).str.lower().str.contains(pattern, regex=True, na=False)
+        sap_mask = df['SAP Kodu'].astype(str).str.lower().str.contains(pattern, regex=True, na=False)
+        result = df[ad_mask | sap_mask]
+        # Performans için sonuçları sınırla
+        if len(result) > self._MAX_RESULTS:
+            result = result.head(self._MAX_RESULTS)
+        return result
+
+    @staticmethod
+    def _calc_ver(row) -> int:
+        borc     = int(row.get('Borç', 0) or 0)
+        depo     = int(row.get('DEPO', 0) or 0)
+        bekleyen = int(row.get('Bekleyen', 0) or 0)
+        plan     = int(row.get('Plan', 0) or 0)
+        exc      = int(row.get('EXC', 0) or 0)
+        sube     = int(row.get('SUBE', 0) or 0)
+        exc_m    = int(row.get('EXC_MUTLAK', 0) or 0)
+        sube_m   = int(row.get('SUBE_MUTLAK', 0) or 0)
+        return max(0, borc - depo - bekleyen - plan + max(0, exc_m - exc) + max(0, sube_m - sube))
+
+    def _make_checkbox_widget(self, malzeme_kodu: str) -> QWidget:
+        """Hücre içine ortalanmış QCheckBox koyan wrapper widget."""
+        wrap = QWidget()
+        h = QHBoxLayout(wrap)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setAlignment(Qt.AlignCenter)
+        chk = QCheckBox()
+        chk.setProperty('malzeme_kodu', malzeme_kodu)
+        h.addWidget(chk)
+        return wrap
+
+    def _checkbox_at(self, row: int) -> QCheckBox:
+        """Belirtilen satırdaki QCheckBox'ı döndür."""
+        wrap = self.table.cellWidget(row, 0)
+        if wrap is None:
+            return None
+        return wrap.findChild(QCheckBox)
+
+    def _refresh(self):
+        rows = self._get_rows(self.search_box.text())
+        # Performans: render sırasında updates ve sıralama kapalı
+        self.table.setUpdatesEnabled(False)
+        self.table.setSortingEnabled(False)
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        n_rows = len(rows)
+        self.table.setRowCount(n_rows)
+        editable_set = self._EDITABLE
+        cols_local = self._COLS
+        for r, (_, row) in enumerate(rows.iterrows()):
+            malzeme_kodu = str(row.get('Malzeme Kodu', ''))
+            self.table.setCellWidget(r, 0, self._make_checkbox_widget(malzeme_kodu))
+            for c, col in enumerate(cols_local):
+                if col == 'Ver':
+                    val = str(self._calc_ver(row))
+                elif col in ('EXC_MUTLAK', 'SUBE_MUTLAK'):
+                    val = str(int(row.get(col, 0) or 0))
+                else:
+                    raw = row.get(col, '')
+                    val = '' if pd.isna(raw) else str(raw)
+                item = QTableWidgetItem(val)
+                item.setData(Qt.UserRole, malzeme_kodu)
+                if c in editable_set:
+                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                else:
+                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                self.table.setItem(r, c + 1, item)
+        self.table.blockSignals(False)
+        self.table.setUpdatesEnabled(True)
+        # Checkbox sütunu dar
+        self.table.setColumnWidth(0, 32)
+
+    # ──────────────────────── DÜZENLEME ─────────────────
+    def _on_item_changed(self, item: QTableWidgetItem):
+        # Tablo sütunu = checkbox(0) + veri sütunları → veri index = col-1
+        data_col = item.column() - 1
+        if data_col not in self._EDITABLE:
+            return
+        malzeme_kodu = item.data(Qt.UserRole)
+        if not malzeme_kodu:
+            return
+        col_name = self._COLS[data_col]   # 'EXC_MUTLAK' veya 'SUBE_MUTLAK'
+        try:
+            new_val = max(0, int(item.text() or '0'))
+        except ValueError:
+            new_val = 0
+
+        mask = self.df['Malzeme Kodu'].astype(str) == malzeme_kodu
+        if not mask.any():
+            return
+        idx = self.df[mask].index[0]
+
+        # Otomatik temizlik: mevcut stok >= hedef ise sıfırla
+        if col_name == 'EXC_MUTLAK' and new_val > 0:
+            if int(self.df.loc[idx, 'EXC']) >= new_val:
+                new_val = 0
+        elif col_name == 'SUBE_MUTLAK' and new_val > 0:
+            if int(self.df.loc[idx, 'SUBE']) >= new_val:
+                new_val = 0
+
+        self.df.loc[idx, col_name] = new_val
+
+        # Sadece auto-cleanup ile değer değiştiyse hücreyi geri yaz
+        if str(new_val) != item.text():
+            self.table.blockSignals(True)
+            item.setText(str(new_val))
+            self.table.blockSignals(False)
+
+        # Sessiz debounced kayıt — anlık Ver/status güncellemesi yok
+        self._save_timer.start(800)
+
+    # ──────────────────────── KAYDET ────────────────────
+    def _save_to_sheets(self):
+        """PRGsheet/Mutlak sayfasını dialog'daki güncel df ile yeniden yaz.
+        Modül seviyesindeki ortak fonksiyonu kullanır."""
+        _persist_mutlak_to_sheets(self.df)
+
+    # ──────────────────────── BUTON HANDLER'LARI ───────
+    def _toggle_select_all(self):
+        """Tümü butonu: hepsi seçili ise tüm checkbox'ları kaldır, değilse hepsini işaretle."""
+        all_checked = True
+        for r in range(self.table.rowCount()):
+            chk = self._checkbox_at(r)
+            if chk is None or not chk.isChecked():
+                all_checked = False
+                break
+        new_state = not all_checked
+        for r in range(self.table.rowCount()):
+            chk = self._checkbox_at(r)
+            if chk is not None:
+                chk.setChecked(new_state)
+
+    def _delete_selected(self):
+        """Sil butonu: seçili satırların MUTLAK değerlerini sıfırla ve PRGsheet'e hemen yaz."""
+        selected_kodlar = []
+        for r in range(self.table.rowCount()):
+            chk = self._checkbox_at(r)
+            if chk is not None and chk.isChecked():
+                kodu = chk.property('malzeme_kodu')
+                if kodu:
+                    selected_kodlar.append(str(kodu))
+        if not selected_kodlar:
+            _mutlak_show_message(self, "Bilgi", "Silinecek satır seçilmedi.")
+            return
+        if not _mutlak_confirm(self, f"{len(selected_kodlar)} satır silinecek. Emin misiniz?"):
+            return
+        # MUTLAK değerlerini sıfırla
+        mask = self.df['Malzeme Kodu'].astype(str).isin(selected_kodlar)
+        self.df.loc[mask, 'EXC_MUTLAK'] = 0
+        self.df.loc[mask, 'SUBE_MUTLAK'] = 0
+        # PRGsheet'e hemen yaz (debounce'u iptal et)
+        self._save_timer.stop()
+        self._save_to_sheets()
+        # Görünümü yenile
+        self._refresh()
+
+    def _clear_search(self):
+        """Temizle butonu: arama metnini boşalt."""
+        self.search_box.clear()
+
+    def _save_and_close(self):
+        """Kaydet butonu: bekleyen debounce'u iptal et, kaydet ve dialog'u kapat."""
+        self._save_timer.stop()
+        try:
+            self._save_to_sheets()
+        except Exception as e:
+            _mutlak_show_message(self, "Hata", f"Kayıt hatası: {e}")
+            return
+        self.accept()
